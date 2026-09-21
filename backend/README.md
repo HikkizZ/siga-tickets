@@ -26,6 +26,14 @@ npm run dev                     # http://localhost:3002/health
 | `npm run seed` | Datos iniciales; requiere `SEED_ADMIN_PASSWORD` |
 | `npx tsc --noEmit` | Chequeo de tipos |
 
+## API
+
+Contrato completo de los endpoints (Fases 0 y 1) en `../docs/api.md`.
+
+## Adjuntos
+
+Se guardan en disco bajo `ADJUNTOS_DIR` (por defecto `./storage/adjuntos`, ignorado por git y fuera de cualquier ruta servida) con el sha256 como nombre. Los tests usan `./storage/adjuntos-test` y la suite lo borra al terminar. **No hay antivirus real todavía**: `NoopAntivirus` marca todo como `limpio` y el API lo avisa en el log al arrancar (ClamAV es una fase posterior).
+
 `synchronize` está siempre en `false`: todo cambio de esquema es una migración nueva en `src/migrations/`.
 
 ## SQL Server: notas

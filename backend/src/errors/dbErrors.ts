@@ -1,4 +1,5 @@
 import { QueryFailedError } from "typeorm";
+import { AppError } from "./AppError.js";
 
 // Errores de SQL Server que interesan al mapeo a AppError (el driver los expone en `number`):
 //   2627 = violación de UNIQUE constraint, 2601 = de unique index (incluye los filtrados)
@@ -22,4 +23,15 @@ export function violacionUnica(err: unknown): { mensaje: string } | null {
   const numero = numeroErrorSql(err);
   if (numero === undefined || !ERR_UNICO.includes(numero)) return null;
   return { mensaje: (err as QueryFailedError).driverError.message ?? "" };
+}
+
+// Errores que en una carrera significan "otro te ganó": 2627/2601 (índice único del tramo
+// abierto), 50001 (trigger de solape) y 1205 (deadlock). Se responden como 409 reintentable.
+export function conflictoConcurrencia(err: unknown): AppError | null {
+  const numero = numeroErrorSql(err);
+  if (numero === undefined) return null;
+  if (ERR_UNICO.includes(numero) || numero === ERR_ASIGNACION_SOLAPE || numero === ERR_DEADLOCK) {
+    return new AppError(409, "CONFLICTO_CONCURRENCIA", "La OT fue modificada por otra operación al mismo tiempo; reintenta");
+  }
+  return null;
 }

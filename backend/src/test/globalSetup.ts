@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { DataSource } from "typeorm";
 import { AppDataSource } from "../config/dataSource.js";
 import { env } from "../config/env.js";
@@ -5,7 +6,7 @@ import { env } from "../config/env.js";
 // Crea siga-tickets-test si no existe y le aplica las migraciones (idempotente).
 // La BD se crea SIN COLLATE explícito, con la colación del servidor: si el servidor no fuera
 // Modern_Spanish_CI_AS, el test de colación de esquema.test.ts lo delata en vez de ocultarlo.
-export default async function setup(): Promise<void> {
+export default async function setup(): Promise<() => Promise<void>> {
   // Nunca se crea ni se migra otra cosa que una BD *-test (y el nombre va entre corchetes).
   if (!/^[A-Za-z0-9_-]+-test$/.test(env.db.name)) {
     throw new Error(`Los tests solo corren contra una BD *-test, no ${env.db.name}`);
@@ -30,4 +31,7 @@ export default async function setup(): Promise<void> {
   await AppDataSource.initialize();
   await AppDataSource.runMigrations();
   await AppDataSource.destroy();
+
+  // Teardown: borra los adjuntos que los tests dejaron en disco.
+  return () => rm(env.adjuntosDir, { recursive: true, force: true });
 }

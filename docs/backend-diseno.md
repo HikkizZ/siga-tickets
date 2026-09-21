@@ -161,9 +161,9 @@ Interna `/api/v1` (JWT). Pública `/publico` (sin JWT). `/webhooks`. Envelope `{
 | PATCH | /ots/:id | tecnico* | Campos editables |
 | POST | /ots/:id/estado | tecnico* | **Único** camino de cambio de estado (kanban sin drag & drop) |
 | POST | /ots/:id/derivar | responsable, gestion, admin | |
-| POST/DELETE | /ots/:id/colaboradores[/:usuarioId] | responsable, gestion | |
+| POST/DELETE | /ots/:id/colaboradores[/:usuarioId] | responsable, gestion | Además, cualquier tecnico puede añadirse a sí mismo (POST) |
 | POST | /ots/:id/comentarios | tecnico | `{cuerpo, visibleCliente}` |
-| GET/POST/DELETE | /ots/:id/horas[/:id] | tecnico | Propias; gestion/admin cualquiera |
+| GET/POST/DELETE | /ots/:id/horas[/:id] | tecnico | Propias, y registrar solo si es responsable o colaborador; gestion/admin cualquiera |
 | GET/POST/PATCH/DELETE | /ots/:id/etapas[/:id] | tecnico* | Gantt |
 | GET/POST | /cotizaciones | gestion | |
 | PATCH | /cotizaciones/:id | gestion | Solo en borrador |
@@ -196,9 +196,9 @@ RBAC:
 | Tomar ticket sin responsable | ✓ | ✓ | ✓ | — |
 | Editar, cambiar estado/prioridad | ✓ | ✓ | si responsable o colaborador | — |
 | **Derivar** | ✓ | ✓ | solo si es el responsable actual | — |
-| Colaboradores | ✓ | ✓ | si responsable | — |
+| Colaboradores | ✓ | ✓ | si responsable; cualquier tecnico puede añadirse a sí mismo | — |
 | Responder al cliente / nota interna | ✓ | ✓ | si responsable o colaborador | — |
-| Registrar horas | ✓ | ✓ | solo propias | — |
+| Registrar horas | ✓ | ✓ | solo propias y solo si es responsable o colaborador | — |
 | Etapas (Gantt) | ✓ | ✓ | si responsable | — |
 | Cotizaciones (crear/editar/enviar/aprobar) | ✓ | ✓ | — | — |
 | Vincular ticket↔OT, convertir a OT | ✓ | ✓ | — | — |
@@ -225,8 +225,8 @@ Docker Compose: `api`, `worker` (misma imagen), volumen de adjuntos, `clamav` (S
 ## 9. Plan por fases
 | Fase | Entrega | Duración |
 |---|---|---|
-| **0** | Esqueleto, Docker, **migración inicial con todo el esquema**, auth + RBAC + usuarios, `/health`, tests | 3–4 días |
-| 1 | OT núcleo: CRUD, kanban, estado, derivación + cadena, colaboradores, auditoría, horas, etapas, comentarios, adjuntos | 1,5 sem |
+| **0** | **HECHA.** Esqueleto, Docker, **migración inicial con todo el esquema**, auth + RBAC + usuarios, `/health`, tests | 3–4 días |
+| **1** | **HECHA (2026-09-21).** OT núcleo: CRUD, kanban, estado, derivación + cadena, colaboradores, auditoría, horas, etapas, comentarios, adjuntos locales. Ver sección 10 | 1,5 sem |
 | 2 | Cotizaciones | 3 días |
 | 3 | Tickets: hilo, notas internas, tomar, derivar, conversión a OT con herencia | 1,5 sem |
 | 4 | SLA hábil + notificaciones | 1 sem |
@@ -235,3 +235,19 @@ Docker Compose: `api`, `worker` (misma imagen), volumen de adjuntos, `clamav` (S
 | 7 | Dashboard + búsqueda | 4 días |
 
 Orden de necesidad del frontend: `/usuarios` y `/clientes` → `/ots/kanban` → `/ots/:id` → `/tickets` → `/notificaciones/resumen` → `/dashboard`. Dashboard por consulta directa (sin materializar). Búsqueda con `pg_trgm` + GIN y `UNION ALL` de 4 ramas con `LIMIT 5`.
+
+## 10. Fase 1 (OT núcleo): estado y desvíos
+
+Implementada y cubierta por tests (contrato de la API en `api.md`). Sin cambios de esquema (la migración `EsquemaInicial` bastó). Lo que la implementación añade o decide respecto de este documento:
+
+- **Eventos**: además de los previstos se añade `horas_eliminadas` (borrar horas también se audita). `ot_editada` lleva la lista de campos cambiados (no valores); `comentario` lleva el id del comentario, no el texto.
+- **Derivación y concurrencia**: cada operación que muta una OT toma `UPDLOCK` sobre su fila (`bloquearOt`), lo que serializa las escrituras por OT. Además, la derivación compara el responsable que el actor vio al empezar con el de dentro de la transacción: si cambió, responde `409 CONFLICTO_CONCURRENCIA` (así dos derivaciones simultáneas, incluso de admin/gestion, dan exactamente un ganador). Los errores 2627/2601/1205/50001 de la BD se traducen al mismo 409 (`conflictoConcurrencia`, red de seguridad). Si la derivación cae en el mismo milisegundo que el inicio del tramo, `hasta` se corre 1 ms (el CHECK exige `hasta > desde`); cerrar y abrir usan el mismo instante, tomado del reloj de la BD.
+- **Notificaciones**: la derivación inserta la fila (`tipo=derivacion`); el API de lectura llega en la fase 4.
+- **Horas** (resuelto): un `tecnico` registra **solo las propias y solo en OT donde es responsable actual o colaborador** (`puedeRegistrarHoras`); puede borrar solo las suyas sin exigir relación con la OT (`puedeGestionarHoras`). Para entrar a una OT ajena puede añadirse a sí mismo como colaborador (`puedeAgregarColaborador`); esto le concede también editar, cambiar estado y adjuntar, según la matriz.
+- **Lectura de listas**: se añadieron `GET /ots/:id/comentarios|horas|etapas` (la tabla de la sección 4 solo listaba POST/DELETE en algunos).
+- **Kanban**: devuelve `data: [{estado,total,ots:[tarjeta]}]` (arreglo, para conservar el orden de columnas); tres consultas fijas. Sin paginación: incluye todas las OT que cumplan el filtro.
+- **Listado**: `q` usa `LIKE ... ESCAPE` con parámetro (escapa la barra invertida, `%`, `_` y `[`); `desde/hasta` cuentan el día en hora de Chile (`AT TIME ZONE`).
+- **Adjuntos**: multer en memoria (tope 10 MB), extensión **y** MIME deben coincidir con la lista blanca (415 si no); descarga solo si `estado = limpio`. `storage_key` = sha256 y no sale en el API. `Antivirus` es una interfaz con `NoopAntivirus` (deja `limpio` sin escanear y avisa en el log al arrancar): **el adjunto NO está escaneado** hasta integrar ClamAV. No hay endpoint de borrado de adjuntos en esta fase. `ADJUNTOS_DIR` (por defecto `./storage/adjuntos`, ignorado por git).
+- **OT interna**: al crear, una OT no interna con `areaInterna` (o una interna con `clienteId`) se rechaza con 400, no solo lo que el CHECK impediría.
+- **SLA**: los campos `sla_*` de `ot` no se calculan todavía (default `en_plazo`, vencimiento `NULL`).
+- **Cambios en Fase 0**: solo `dbErrors.ts` (se añade `conflictoConcurrencia`), `env.ts` (`ADJUNTOS_DIR`), `app.ts`/`server.ts` (rutas y aviso de antivirus), `vitest.config.ts` y `globalSetup.ts` (carpeta de adjuntos de test y su limpieza al terminar).

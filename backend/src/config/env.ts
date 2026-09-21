@@ -18,6 +18,7 @@ const esquema = z
     DB_TRUST_SERVER_CERTIFICATE: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
     JWT_SECRET: z.string().min(32, "JWT_SECRET debe tener al menos 32 caracteres"),
     JWT_EXPIRES_IN: z.string().default("2h"),
+    ADJUNTOS_DIR: z.string().min(1).default("./storage/adjuntos"),
     LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   })
   .refine((e) => !(e.NODE_ENV === "production" && e.JWT_SECRET.startsWith("cambia-esto")), {
@@ -39,6 +40,7 @@ export const env = {
   nodeEnv: e.NODE_ENV,
   port: e.PORT,
   logLevel: e.LOG_LEVEL,
+  adjuntosDir: e.ADJUNTOS_DIR,
   db: {
     host: e.DB_HOST,
     port: e.DB_PORT,

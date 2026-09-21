@@ -6,6 +6,8 @@ process.env.NODE_ENV = "test";
 process.env.DB_NAME = "siga-tickets-test";
 process.env.LOG_LEVEL = "silent";
 process.env.JWT_SECRET = "secreto-solo-para-tests-0123456789abcdef";
+// Adjuntos de test en una carpeta propia (ignorada por git); globalSetup la borra al terminar.
+process.env.ADJUNTOS_DIR = "./storage/adjuntos-test";
 
 export default defineConfig({
   test: {

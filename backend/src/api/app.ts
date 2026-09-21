@@ -7,8 +7,10 @@ import { AppDataSource } from "../config/dataSource.js";
 import { AppError } from "../errors/AppError.js";
 import { errorHandler, notFound } from "../middlewares/errorHandler.js";
 import { requestLogger } from "../middlewares/requestLogger.js";
+import { adjuntoRouter } from "../routes/adjunto.routes.js";
 import { authRouter } from "../routes/auth.routes.js";
 import { clienteRouter } from "../routes/cliente.routes.js";
+import { otRouter } from "../routes/ot.routes.js";
 import { usuarioRouter } from "../routes/usuario.routes.js";
 
 export const app = express();
@@ -30,6 +32,8 @@ app.get("/health", async (_req, res) => {
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/usuarios", usuarioRouter);
 app.use("/api/v1/clientes", clienteRouter);
+app.use("/api/v1/ots", otRouter);
+app.use("/api/v1/adjuntos", adjuntoRouter);
 
 // Deben ir al final: el 404 para rutas no montadas y el manejador central de errores.
 app.use(notFound);
