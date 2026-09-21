@@ -1,0 +1,237 @@
+# siga-ot — Diseño del backend
+
+Mesa de ayuda propia + gestión de OT y cotizaciones para SIGA Ltda (~8 usuarios). Diseño elaborado el 2026-09-20/21 a partir del prototipo Lovable (https://pixel-perfect-canvas-6040.lovable.app), que sirve de plantilla para el frontend real. Este documento es la fuente de verdad del backend.
+
+## 0. Decisiones de Felipe (2026-09-21)
+
+| # | Tema | Decisión |
+|---|---|---|
+| 1 | Buzón soporte@sigaltda.cl / Microsoft 365 | Lo administra alguien de IT; se consulta cuando haga falta o al pasar a producción. Mientras tanto, ingesta por IMAP genérico detrás de `MailboxSource`. |
+| 2 | Horario laboral SLA | Lunes a viernes 09:00–18:30 (asumido continuo, sin colación; sábado y domingo no laborables). Feriados nacionales de Chile. Zona `America/Santiago`. |
+| 3 | SLA en "Esperando cliente" | **Se pausa.** |
+| 4 | Responsable de ticket entrante (portal/correo) | Nace **sin responsable**. Los colegas ven la bandeja y **toman** el ticket (`POST /tickets/:id/tomar`); quien lo toma es el responsable. Si dos lo toman a la vez, gana el primero (índice único del tramo abierto) y el otro recibe 409. |
+| — | BD | **SQL Server 2025** (Developer, `localhost:1433`, BD `siga-tickets`; colación `Modern_Spanish_CI_AS`; sin Full-Text). Antes era PostgreSQL (portado en septiembre 2026; el esquema de 2.3 sigue siendo el modelo lógico, el cuadro de 2.5 recoge las equivalencias). El legacy (siga-express-erp: MySQL/MSSQL) queda detrás de `LegacyGateway`, vacío por ahora. |
+| — | Auth | La diseña Felipe. Fase 0 parte del patrón ya existente en `siga-log-monitor` (JWT + bcrypt + `authorize`). |
+| — | Cliente | Tabla catálogo simple (`cliente`), sin contactos. El solicitante es texto en el ticket. |
+
+Pendientes no bloqueantes: roles concretos por persona, años de retención, fracciones de hora (0,25), storage local vs S3, revisión de la Ley 21.719 (vigente dic-2026) antes de abrir el portal.
+
+## 1. Arquitectura
+
+Monolito modular Express + TypeORM + SQL Server. Un proceso API y un proceso `worker` (PM2). Sin Redis ni broker.
+
+- Capas: `routes → controllers (Zod, HTTP) → services (reglas, transacciones) → TypeORM`. `policies/` para permisos por fila. Sin lógica en controllers, sin HTTP en services.
+- Errores: los servicios lanzan `AppError(status, code, message)`; `errorHandler` central. Formato: `{status:'error', code, message, details?}`. Éxito: `{status:'ok', data, meta?}`.
+- Validación: Zod vía middleware `validate({body,params,query})` que deja el resultado en `req.validated`.
+- Logging: `pino` con `requestId`. Nunca loguear cuerpos de correo, tokens ni datos del solicitante.
+- Config: `config/env.ts` valida el entorno con Zod al arrancar y falla rápido.
+- Todo lo externo detrás de interfaces: `MailboxSource` (Graph/Gmail/IMAP), `Mailer`, `FileStorage` (disco/S3), `LegacyGateway`.
+
+```
+backend/src/
+  api/            app.ts  server.ts  worker.ts
+  config/         env.ts  dataSource.ts  logger.ts
+  auth/           jwt.ts  password.ts  portalToken.ts
+  middlewares/    authenticate.ts  authorize.ts  validate.ts  errorHandler.ts  rateLimit.ts  upload.ts
+  policies/       ot.policy.ts  ticket.policy.ts
+  entities/  routes/{interna,publico}/  controllers/  services/  validations/
+  mail/{ingest,outbound}/   storage/   legacy/   jobs/   errors/
+  migrations/   scripts/    types/
+```
+
+Convenciones (alineadas con `siga-log-monitor`, salvo donde se indica):
+- **ESModules siempre** (NodeNext). `emitDecoratorMetadata: false` → todo `@Column` lleva `type` explícito.
+- Me aparto del hermano en: `synchronize: false` **siempre** (los CHECK, índices filtrados, la columna calculada y los triggers no los modela TypeORM y `synchronize` los borraría); snake_case en BD (`SnakeNamingStrategy`); `pino` en vez de `console.error`; servicios que lanzan `AppError`.
+
+## 2. Modelo de datos
+
+### 2.1 Convenciones
+- Todo `datetimeoffset(3)` (proceso con `TZ=UTC`; en el diseño lógico, `timestamptz`); `date` solo para fechas de negocio (`hora_trabajada.fecha`, `etapa_ot.fecha_*`, `feriado.fecha`, `cotizacion.fecha`, `ot.fecha_estimada_termino`).
+- PK `uniqueidentifier` (`DEFAULT NEWID()`). `numero` (TK-0001) es clave de negocio UNIQUE. **SQL Server devuelve los uuid en MAYÚSCULAS**: un transformer de TypeORM (`uuidTransformer`) los normaliza a minúsculas en toda entidad, y esa es la forma canónica en JWT, JSON y URLs.
+- `creado_en` / `actualizado_en` `datetimeoffset(3) NOT NULL DEFAULT SYSDATETIMEOFFSET()` en tablas mutables. `actualizado_en` lo fija un subscriber de TypeORM en cada `save()` (el `@UpdateDateColumn` escribiría hora local del servidor con offset +00:00); en un `UPDATE` por query builder hay que pasarlo explícito.
+- Catálogos como `nvarchar + CHECK` (no hay enums nativos) con enum TS espejo. `cliente`, `sla_config`, `feriado`, `calendario_laboral` son tablas.
+- Sin extensiones. La base usa la colación `Modern_Spanish_CI_AS` (insensible a mayúsculas, sensible a acentos): de ella depende que `ticket.solicitante_email`, `usuario.email` y `cliente.nombre` comparen sin distinguir mayúsculas (un test falla si la colación cambia). Texto: `nvarchar`, nunca `text`.
+- Soft delete: `usuario`, `cliente`, `cotizacion` (anular). Append-only: `evento`, `asignacion`, `correo_ingerido`, `mensaje_ticket`. Hard delete: `ot_colaborador`, `etapa_ot`, `notificacion`, `adjunto` infectado.
+
+### 2.2 Folios sin huecos
+Una SEQUENCE deja huecos en cada rollback. Se usa `folio_counter(serie PK, ultimo bigint, ancho smallint)` con semilla `('TK',0,4)`, `('OT',1040,4)`, `('COT',2040,4)`, incrementado dentro de la misma transacción del insert:
+
+```sql
+UPDATE folio_counter SET ultimo = ultimo + 1
+OUTPUT inserted.serie + '-' + RIGHT(REPLICATE('0', inserted.ancho) + CAST(inserted.ultimo AS nvarchar(20)), inserted.ancho)
+WHERE serie = @0;
+```
+Helper `siguienteFolio(manager, serie)` que exige un `EntityManager` transaccional.
+
+### 2.3 Tablas
+
+**usuario**: id, username UNIQUE varchar(50), nombre varchar(120), cargo varchar(80) null, email UNIQUE varchar(160), password_hash varchar(120) (`select:false`), rol CHECK IN ('admin','gestion','tecnico','lectura'), activo bool default true, must_change_password bool default false. Incluir un usuario de sistema `sistema` (inactivo) para `recepcionado_por` de tickets de portal/correo.
+
+**cliente**: id, nombre UNIQUE, activo.
+
+**ticket**: id, numero UNIQUE varchar(12), asunto varchar(200), descripcion text, solicitante_nombre varchar(120), solicitante_email nvarchar(320) (CI por colación), solicitante_telefono null, solicitante_empresa null, cliente_id null FK (SET NULL), canal CHECK IN ('portal','correo','telefono','presencial','interno'), prioridad CHECK IN ('alta','media','baja'), estado CHECK IN ('nuevo','abierto','esperando_cliente','resuelto','cerrado') default 'nuevo', fecha_ingreso timestamptz default now(), recepcionado_por_id FK usuario NOT NULL (**inmutable**), responsable_actual_id null FK (denormalizado de `asignacion`; NULL = sin tomar), primera_respuesta_en null (se escribe una sola vez), resuelto_en, cerrado_en, sla_resolucion_vence_en, sla_respuesta_vence_en, sla_estado CHECK IN ('en_plazo','por_vencer','vencida') default 'en_plazo', sla_pausado_desde null, token_publico uniqueidentifier UNIQUE default NEWID().
+Índices: UNIQUE(numero); (estado, prioridad); filtrado (responsable_actual_id) WHERE estado <> 'resuelto' AND estado <> 'cerrado'; filtrado (sla_estado, sla_resolucion_vence_en) con el mismo predicado; (solicitante_email). Sin índices trigram: la búsqueda global usa `LIKE`.
+
+**ot**: id, numero UNIQUE (OT-1041…), titulo, descripcion, cliente_id null FK, area_interna null, es_interna bool default false con `CHECK ((es_interna = 1 AND area_interna IS NOT NULL AND cliente_id IS NULL) OR (es_interna = 0 AND cliente_id IS NOT NULL))`, categoria CHECK IN ('mantencion','instalacion','reparacion','cotizacion','soporte','otro'), prioridad, origen CHECK IN ('mesa_ayuda','correo','telefono','presencial','interna'), ubicacion null, solicitante_nombre/solicitante_contacto null, fecha_ingreso timestamptz, fecha_estimada_termino date null, estado CHECK IN ('ingresado','en_cotizacion','aprobado','en_ejecucion','terminado','facturado') default 'ingresado', recepcionado_por_id, responsable_actual_id, terminado_en null, sla_* igual que ticket (resolución).
+Índices: (estado); (estado, prioridad, fecha_ingreso DESC); filtrado (responsable_actual_id) WHERE estado <> 'terminado' AND estado <> 'facturado'; (cliente_id). Sin trigram (`LIKE`).
+
+**asignacion** (cadena de responsables, tickets y OT): id, entidad_tipo CHECK IN ('ticket','ot'), entidad_id uniqueidentifier, usuario_id FK, desde datetimeoffset(3) default SYSDATETIMEOFFSET(), hasta null CHECK (hasta IS NULL OR hasta > desde), motivo_entrada nvarchar(max) null (motivo de la derivación que lo entregó), derivado_por_id null FK, duracion_seg columna calculada `AS (DATEDIFF(SECOND, desde, hasta)) PERSISTED` (NULL con el tramo abierto).
+- Unique filtered index `(entidad_tipo, entidad_id) WHERE hasta IS NULL` → un solo responsable abierto.
+- Trigger `trg_asignacion_sin_solape` (`AFTER INSERT, UPDATE`) → sin tramos solapados: hace `THROW 50001` si `[desde, ISNULL(hasta,'9999-12-31'))` se cruza con otro tramo de la misma entidad. La consulta del trigger usa `WITH (UPDLOCK, HOLDLOCK)` (bloqueos de rango sobre el índice `(entidad_tipo, entidad_id, desde)`) para que sea correcto bajo concurrencia, también con RCSI. Un `THROW` dentro de un trigger deshace **toda** la transacción en curso; el perdedor de una carrera recibe 50001 o, si ambos bloquearon a la vez, 1205 (deadlock): el servicio debe tratar ambos como 409/reintento.
+- Índice (entidad_tipo, entidad_id, desde).
+- Derivar/tomar = una transacción: cerrar tramo abierto, abrir el nuevo, actualizar `responsable_actual_id`, insertar `evento`, insertar `notificacion`. El SLA no se toca.
+
+**evento** (auditoría append-only, tickets/OT/cotizaciones): id bigint identity PK, entidad_tipo CHECK IN ('ticket','ot','cotizacion'), entidad_id, tipo varchar(40) ('creado','estado_cambiado','prioridad_cambiada','derivado','tomado','respuesta_cliente','nota_interna','comentario','vinculado_ot','horas_registradas','sla_cambiado','cotizacion_creada'…), actor_id null FK, actor_externo varchar(160) null, payload nvarchar(max) default '{}' con `CHECK (ISJSON(payload) = 1)`, ocurrido_en datetimeoffset(3) default SYSDATETIMEOFFSET(). Índice (entidad_tipo, entidad_id, ocurrido_en DESC). Sin `actualizado_en`. Inmutabilidad con trigger `trg_evento_inmutable` (`AFTER UPDATE, DELETE` con `THROW 50002`; funciona con cualquier rol, aunque `TRUNCATE` no lo dispara). El payload se valida con `z.discriminatedUnion('tipo', …)` antes de insertar.
+
+**mensaje_ticket**: id, ticket_id FK CASCADE, tipo CHECK IN ('cliente','respuesta_cliente','nota_interna'), autor_id null FK, autor_externo null, `CHECK ((tipo='cliente' AND autor_externo IS NOT NULL AND autor_id IS NULL) OR (tipo<>'cliente' AND autor_id IS NOT NULL))`, cuerpo nvarchar(max), cuerpo_html null (sanitizado), message_id nvarchar(255) null con **unique filtered index** `WHERE message_id IS NOT NULL` (un UNIQUE de SQL Server admitiría un solo NULL), in_reply_to null, referencias null (arreglo JSON en `nvarchar(max)` con `CHECK (referencias IS NULL OR ISJSON(referencias) = 1)`), enviado_en null, creado_en. Índices (ticket_id, creado_en), (in_reply_to). **Regla**: el portal usa un método de repositorio distinto con `tipo <> 'nota_interna'` en el WHERE, nunca un filtro en memoria.
+
+**cotizacion**: id, numero UNIQUE (COT-2041…), ot_id null FK (SET NULL), cliente_id null FK (NO ACTION), monto_clp bigint CHECK (>= 0), fecha date default fecha local del servidor, estado CHECK IN ('borrador','enviada','aprobada','rechazada'), version smallint default 1, es_principal bool default false, aprobada_en null, anulada_en null. Unique filtered index `(ot_id) WHERE es_principal = 1 AND ot_id IS NOT NULL`. N cotizaciones por OT (historial de rechazos/reajustes), una principal. Índice (estado, fecha).
+
+**ticket_ot**: ticket_id FK, ot_id FK, es_origen bool default false, vinculado_por_id, creado_en. PK (ticket_id, ot_id). Unique filtered index `(ot_id) WHERE es_origen = 1`.
+**ot_colaborador**: ot_id, usuario_id, agregado_por_id, creado_en. PK (ot_id, usuario_id). Colaborar ≠ derivar (no traspasa responsabilidad; colaborador ≠ responsable actual, validado en servicio).
+**comentario_ot**: id, ot_id, autor_id, cuerpo, visible_cliente bool default false (interno por defecto).
+**hora_trabajada**: id, ot_id, usuario_id, fecha date, horas decimal(5,2) CHECK (>0 AND <=24), detalle. Total = SUM on-demand.
+**etapa_ot**: id, ot_id, nombre, fecha_inicio date, fecha_termino date CHECK (>= inicio), orden smallint. Editable tras crear la OT.
+**adjunto**: id, entidad_tipo CHECK IN ('ticket','ot','mensaje'), entidad_id, nombre varchar(255), mime, tamano_bytes CHECK (>0 AND <=26214400), sha256 nchar(64), storage_key, estado CHECK IN ('escaneando','limpio','infectado'), subido_por_id null.
+**notificacion**: id, usuario_id, tipo, entidad_tipo, entidad_id, titulo, cuerpo, leida_en null. Índice filtrado (usuario_id, creado_en DESC) WHERE leida_en IS NULL.
+**sla_config**: prioridad PK, horas_resolucion int, horas_primera_respuesta int, usar_horas_habiles bool default true, pausar_en_espera_cliente bool default true, umbral_por_vencer decimal(3,2) default 0.20. Semilla: Alta 24/2, Media 72/8, Baja 120/24.
+**calendario_laboral**: id, dia_semana smallint 1..7, hora_inicio time(0), hora_fin time(0) CHECK (fin > inicio). Semilla: lun–vie 09:00–18:30.
+**feriado**: fecha date PK, nombre, irrenunciable bool. Carga por script/endpoint admin; no depender de API externa.
+**sla_pausa**: id, entidad_tipo, entidad_id, desde, hasta null, motivo. Unique filtered index `(entidad_tipo, entidad_id) WHERE hasta IS NULL`.
+**correo_ingerido**: id, message_id UNIQUE, origen, recibido_en, estado CHECK IN ('pendiente','procesado','ignorado','error'), ticket_id null, error, raw_ref.
+**correo_saliente**: id, plantilla, para, asunto, cuerpo_html, headers nvarchar(max) default '{}' con `CHECK (ISJSON(headers) = 1)`, mensaje_ticket_id null, estado CHECK IN ('pendiente','enviando','enviado','fallido'), intentos smallint default 0, proximo_intento_en default now(), error. Índice filtrado (proximo_intento_en) WHERE estado = 'pendiente'.
+
+### 2.4 TypeORM
+`type` explícito en cada `@Column`; `@JoinColumn({name})` explícito; `synchronize:false` siempre; migraciones versionadas en `src/migrations/` con las piezas que TypeORM no modela (índices filtrados, CHECK, columna calculada, triggers) escritas a mano con `queryRunner.query()` (una sentencia por llamada: `CREATE TRIGGER` exige su propio batch y no hay `GO`); sin `cascade` salvo `ticket→mensaje_ticket` y `ot→etapa_ot`; `NO ACTION` (equivalente al RESTRICT de PG) por defecto hacia `usuario` y hacia `cliente` (SQL Server rechaza rutas de cascada múltiples; los clientes se desactivan con `activo`, no se borran); relaciones polimórficas (`evento`, `adjunto`, `asignacion`) como columnas planas sin `@ManyToOne`; `decimal` y `bigint` llegan como string → transformer donde el diseño los usa como número; `jsonb`/`text[]` son `nvarchar(max)` con transformer JSON (no se usa el tipo `json` nativo: tedious no lo soporta bien).
+
+### 2.5 Equivalencias PostgreSQL → SQL Server (port de septiembre 2026)
+| PostgreSQL (fase 0 original) | SQL Server (hoy) |
+|---|---|
+| `uuid` + `gen_random_uuid()` | `uniqueidentifier` + `NEWID()`; salen en MAYÚSCULAS del driver → transformer a minúsculas |
+| `timestamptz` + `now()` | `datetimeoffset(3)` + `SYSDATETIMEOFFSET()` |
+| `varchar(n)` / `text` / `char(n)` | `nvarchar(n)` / `nvarchar(max)` / `nchar(n)` |
+| `boolean`, `numeric` | `bit`, `decimal` |
+| `jsonb`, `text[]` | `nvarchar(max)` + `CHECK (ISJSON(col) = 1)` (arreglo JSON para `referencias`) |
+| `citext` | `nvarchar` + colación `Modern_Spanish_CI_AS` de la BD |
+| extensiones `pgcrypto`, `citext`, `pg_trgm`, `btree_gist` | ninguna; sin Full-Text |
+| índice parcial `WHERE ...` | filtered index (solo comparaciones con AND: `NOT IN (a,b)` → `<> a AND <> b`) |
+| `UNIQUE` sobre columna nullable (N NULL) | unique filtered index `WHERE col IS NOT NULL` (`mensaje_ticket.message_id`) |
+| `GENERATED ... STORED` | columna calculada `PERSISTED` |
+| `EXCLUDE USING gist` | trigger `AFTER INSERT, UPDATE` + `THROW 50001`, con `UPDLOCK, HOLDLOCK` |
+| trigger plpgsql `BEFORE UPDATE OR DELETE` | trigger T-SQL `AFTER UPDATE, DELETE` + `THROW 50002` |
+| GIN trigram | nada; `LIKE` |
+| `UPDATE ... RETURNING` | `UPDATE ... OUTPUT inserted.*` |
+| `FOR UPDATE SKIP LOCKED` | `WITH (UPDLOCK, READPAST, ROWLOCK)` |
+| `ON CONFLICT DO NOTHING` | buscar-luego-insertar / `MERGE` |
+| `ON DELETE SET NULL/RESTRICT` hacia `cliente`/`usuario` | `NO ACTION` (rutas de cascada múltiples); `SET NULL` se conserva en `cotizacion.ot_id`, `correo_ingerido.ticket_id`, `correo_saliente.mensaje_ticket_id` |
+| errores `23505`, `23514`/`23503`, `23P01`, excepción del trigger | `number` 2627/2601 (único), 547 (FK/CHECK), 50001 (solape de asignación), 50002 (evento inmutable); 1205 = deadlock |
+
+## 3. SLA
+- Vencimiento = ingreso + plazo según prioridad actual, en **horas hábiles** (lun–vie 09:00–18:30, sin feriados chilenos, `America/Santiago`). Se recalcula al cambiar la prioridad, al cerrar una pausa y al editar `sla_config`. **No se reinicia al derivar ni al tomar.**
+- Pausa mientras el ticket está en `esperando_cliente` (`sla_pausa`); al reanudar, el vencimiento se corre los minutos hábiles pausados.
+- Estados: `en_plazo` → `por_vencer` (queda < 20 % del plazo en minutos hábiles) → `vencida`. Un job cada 5 min actualiza `sla_estado` y notifica solo en la transición.
+- `sumarHorasHabiles(inicio, horas, calendario, feriados, zona)`: función pura con **Luxon** (Santiago tiene horario de verano). Es el corazón del sistema y lleva la mayor cobertura de tests.
+- Feriados nacionales Chile 2026 (verificar contra calendario oficial antes de producción): 1-ene, 3-abr (Viernes Santo), 4-abr (Sábado Santo), 1-may, 21-may, 21-jun, 29-jun, 16-jul, 15-ago, 18-sep, 19-sep, 12-oct, 31-oct, 1-nov, 8-dic, 25-dic.
+
+## 4. API REST
+Interna `/api/v1` (JWT). Pública `/publico` (sin JWT). `/webhooks`. Envelope `{status:'ok', data, meta:{page,perPage,total}}`; orden con whitelist de columnas; fechas ISO 8601.
+
+| Método | Ruta | Rol mínimo | Descripción |
+|---|---|---|---|
+| POST | /auth/login | — | Login, devuelve JWT |
+| GET | /auth/me | cualquiera | Perfil |
+| POST | /auth/password | cualquiera | Cambiar contraseña propia |
+| GET/POST/PATCH | /usuarios[/:id] | admin | ABM |
+| GET | /clientes | lectura | Catálogo |
+| POST/PATCH | /clientes[/:id] | admin | |
+| GET | /tickets | lectura | Filtros estado, prioridad, canal, responsable, mios, sinAsignar, q, desde, hasta |
+| POST | /tickets | tecnico | Alta interna (teléfono/presencial/interno); recepcionado_por = usuario logueado |
+| GET | /tickets/:id | lectura | Detalle + hilo completo |
+| PATCH | /tickets/:id | tecnico* | Asunto, prioridad (recalcula SLA) |
+| POST | /tickets/:id/estado | tecnico* | Estado del ticket |
+| POST | /tickets/:id/tomar | tecnico | Toma un ticket sin responsable; 409 si ya tiene |
+| POST | /tickets/:id/mensajes | tecnico* | `{tipo:'respuesta_cliente'\|'nota_interna', cuerpo, adjuntoIds}` |
+| POST | /tickets/:id/derivar | responsable, gestion, admin | `{destinoId, motivo, mantenerComoColaborador}` |
+| POST | /tickets/:id/convertir-a-ot | gestion | Crea OT con herencia completa |
+| POST/DELETE | /tickets/:id/ots[/:otId] | gestion | Vincular/desvincular |
+| GET | /tickets/:id/eventos | lectura | Timeline |
+| GET | /ots, /ots/kanban | lectura | Lista + filtros; kanban agrupado por estado |
+| POST | /ots | tecnico | Alta |
+| GET | /ots/:id | lectura | Detalle (cadena, colaboradores, horas, etapas, cotizaciones) |
+| PATCH | /ots/:id | tecnico* | Campos editables |
+| POST | /ots/:id/estado | tecnico* | **Único** camino de cambio de estado (kanban sin drag & drop) |
+| POST | /ots/:id/derivar | responsable, gestion, admin | |
+| POST/DELETE | /ots/:id/colaboradores[/:usuarioId] | responsable, gestion | |
+| POST | /ots/:id/comentarios | tecnico | `{cuerpo, visibleCliente}` |
+| GET/POST/DELETE | /ots/:id/horas[/:id] | tecnico | Propias; gestion/admin cualquiera |
+| GET/POST/PATCH/DELETE | /ots/:id/etapas[/:id] | tecnico* | Gantt |
+| GET/POST | /cotizaciones | gestion | |
+| PATCH | /cotizaciones/:id | gestion | Solo en borrador |
+| POST | /cotizaciones/:id/estado | gestion | Enviar/aprobar/rechazar |
+| POST | /ots/:id/cotizaciones/vincular | gestion | |
+| POST | /adjuntos; GET /adjuntos/:id/descargar | tecnico / lectura | multipart; stream autenticado |
+| GET/PUT | /sla/config | lectura / admin | |
+| GET/POST/DELETE | /sla/feriados[/:fecha] | admin | |
+| GET | /notificaciones, /notificaciones/resumen | cualquiera | |
+| POST | /notificaciones/:id/leer, /leer-todas | cualquiera | |
+| GET | /dashboard | lectura | Todos los agregados; `?desde&hasta` |
+| GET | /buscar | lectura | `?q=` global (`LIKE`, ~miles de filas; sin Full-Text) |
+
+\* `tecnico` solo si es responsable o colaborador; `admin`/`gestion` sin restricción.
+
+Pública: `POST /publico/tickets` (captcha + rate limit 5/h/IP), `POST /publico/tickets/seguimiento` (`{numero,email}` → token de portal 15 min, scope `portal`), `GET /publico/ticket`, `POST /publico/ticket/mensajes`, `POST /publico/adjuntos`, `GET /publico/adjuntos/:id/descargar`. Webhook: `POST /webhooks/graph`.
+
+## 5. Pipelines asíncronos
+- **Ingesta de correo**: `MailboxSource {nombre, fetchNuevos(cursor), marcarLeido}`. Por mensaje: (1) `INSERT correo_ingerido` capturando el error 2627/2601 de `message_id` UNIQUE (o `MERGE`) (idempotencia antes de cualquier efecto); (2) descartar bucles: `Auto-Submitted`, `Precedence: bulk/auto_reply`, remitente = soporte@, header `X-SIGA-Ticket`, rebotes DSN; (3) threading por `In-Reply-To`/`References` contra `mensaje_ticket.message_id`, luego regex `TK-\d{4}` en asunto validando remitente, si no ticket nuevo `canal='correo'`; (4) adjuntos a `FileStorage` + antivirus, HTML sanitizado; (5) respuesta del cliente reabre `esperando_cliente|resuelto → abierto` y cierra la pausa de SLA. Errores quedan en `estado='error'`, reintento manual por admin.
+- **Correo saliente**: outbox transaccional (`correo_saliente` se inserta en la misma transacción del hecho). Worker cada 30 s tomando filas con `WITH (UPDLOCK, READPAST, ROWLOCK)` (equivalente de `FOR UPDATE SKIP LOCKED`; aún no implementado), backoff 2^intentos minutos, 5 intentos y luego `fallido` + notificación a admin. Todo saliente lleva `Message-ID` propio, `References` y `X-SIGA-Ticket`. El ticket del portal se persiste directo; a soporte@ solo se avisa con `Auto-Submitted: auto-generated`.
+- **Cola**: sin BullMQ ni pg-boss; tablas-cola + `node-cron` en `worker.ts` (PM2, `instances: 1`). Migrar a `pg-boss` solo si crece el volumen.
+
+## 6. Seguridad
+RBAC:
+
+| Acción | admin | gestion | tecnico | lectura |
+|---|:--:|:--:|:--:|:--:|
+| Ver OT/tickets/dashboard | ✓ | ✓ | ✓ | ✓ |
+| Crear ticket / OT | ✓ | ✓ | ✓ | — |
+| Tomar ticket sin responsable | ✓ | ✓ | ✓ | — |
+| Editar, cambiar estado/prioridad | ✓ | ✓ | si responsable o colaborador | — |
+| **Derivar** | ✓ | ✓ | solo si es el responsable actual | — |
+| Colaboradores | ✓ | ✓ | si responsable | — |
+| Responder al cliente / nota interna | ✓ | ✓ | si responsable o colaborador | — |
+| Registrar horas | ✓ | ✓ | solo propias | — |
+| Etapas (Gantt) | ✓ | ✓ | si responsable | — |
+| Cotizaciones (crear/editar/enviar/aprobar) | ✓ | ✓ | — | — |
+| Vincular ticket↔OT, convertir a OT | ✓ | ✓ | — | — |
+| SLA/feriados, usuarios, anular cotización, reprocesar correo | ✓ | — | — | — |
+
+Permisos en dos niveles: `authorize(rol)` (grueso) + `policies/*.policy.ts` (por fila), invocado desde el **servicio** (también se llama desde jobs).
+
+Portal: error idéntico en todos los casos de seguimiento ("No pudimos validar esos datos") y retardo constante; rate limit por IP y por correo; captcha (Turnstile/hCaptcha); DTOs que construyen el objeto campo a campo (`toPortalTicket`, `toPortalOt`) — nunca salen notas internas, horas, montos ni usuarios distintos al responsable; token `scope:'portal'` 15 min y `authenticate` interno lo rechaza. Adjuntos: whitelist MIME+extensión, 10 MB/archivo y 25 MB/ticket, almacenados fuera del webroot con nombre = sha256, ClamAV, descarga con `Content-Disposition: attachment` y `nosniff`. Datos personales: aviso de finalidad en el portal, anonimización de `solicitante_*` de tickets cerrados tras el plazo de retención, `evento.payload` guarda ids no copias. Secretos solo por variables de entorno.
+
+## 7. Correcciones respecto del prototipo Lovable
+- Derivar restringido (hoy cualquiera puede).
+- "Recepcionado por" sale del usuario logueado en servidor; nunca del body.
+- Fechas con hora (`datetimeoffset`), no solo día.
+- OT interna: el CHECK impide el estado inconsistente cliente/área.
+- Cotizaciones N por OT con una principal (el prototipo asumía 1:1).
+- SLA en horas hábiles (el prototipo cuenta horas corridas).
+- Cliente como catálogo, no texto libre.
+- Nuevo: tickets entrantes sin responsable + acción "Tomar" (el frontend necesita botón y filtro "Sin asignar").
+
+## 8. Testing y despliegue
+Vitest + Supertest contra la BD `siga-tickets-test` de SQL Server (la suite la crea si no existe y se niega a correr contra un nombre que no termine en `-test`). Prioridad: (1) `sumarHorasHabiles` (fin de semana, feriado, inicio fuera de horario, cruce de horario de verano, plazo 0, pausa); (2) derivación y toma (un solo tramo abierto, destino ≠ actual, motivo obligatorio, permisos, N derivaciones, SLA intacto, 409 en toma concurrente); (3) herencia ticket→OT; (4) threading, idempotencia y bucles de correo; (5) visibilidad del portal (test de forma del JSON completo, sin notas internas/montos/horas); (6) folios concurrentes sin huecos; (7) transiciones inválidas → 409; (8) matriz RBAC parametrizada.
+Docker Compose: `api`, `worker` (misma imagen), volumen de adjuntos, `clamav` (SQL Server corre en el host, no en Docker). PM2 con `ecosystem.config.cjs` (api cluster, worker fork 1). Backups `BACKUP DATABASE ... WITH COMPRESSION` diario + copia externa semanal. Migraciones en el entrypoint del servicio `api`.
+
+## 9. Plan por fases
+| Fase | Entrega | Duración |
+|---|---|---|
+| **0** | Esqueleto, Docker, **migración inicial con todo el esquema**, auth + RBAC + usuarios, `/health`, tests | 3–4 días |
+| 1 | OT núcleo: CRUD, kanban, estado, derivación + cadena, colaboradores, auditoría, horas, etapas, comentarios, adjuntos | 1,5 sem |
+| 2 | Cotizaciones | 3 días |
+| 3 | Tickets: hilo, notas internas, tomar, derivar, conversión a OT con herencia | 1,5 sem |
+| 4 | SLA hábil + notificaciones | 1 sem |
+| 5 | Portal público + correo saliente | 1 sem |
+| 6 | Ingesta de correo (IMAP primero, Graph después) | 1 sem |
+| 7 | Dashboard + búsqueda | 4 días |
+
+Orden de necesidad del frontend: `/usuarios` y `/clientes` → `/ots/kanban` → `/ots/:id` → `/tickets` → `/notificaciones/resumen` → `/dashboard`. Dashboard por consulta directa (sin materializar). Búsqueda con `pg_trgm` + GIN y `UNION ALL` de 4 ramas con `LIMIT 5`.
