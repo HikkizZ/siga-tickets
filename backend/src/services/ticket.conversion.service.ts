@@ -9,8 +9,9 @@ import { exigirConversion } from "../policies/ticket.policy.js";
 import { problemasConsistenciaInterna } from "../validations/ot.validation.js";
 import { registrarEventoOt, registrarEventoTicket } from "./evento.service.js";
 import { enTransaccion, siguienteFolio } from "./folio.service.js";
-import { otNoEncontrada, type UsuarioActor } from "./ot.common.js";
+import { ahoraDb, otNoEncontrada, type UsuarioActor } from "./ot.common.js";
 import { obtenerDetalleOt } from "./ot.service.js";
+import { calcularVencimientoOt } from "./sla.calculo.service.js";
 import { bloquearTicket } from "./ticket.common.js";
 import { exigirClienteActivoTicket, obtenerDetalleTicket } from "./ticket.service.js";
 
@@ -61,6 +62,14 @@ export async function convertirATicketOt(actor: UsuarioActor, ticketId: string, 
 
     const numero = await siguienteFolio(m, "OT");
     const origen = ORIGEN_POR_CANAL[ticket.canal];
+    const prioridad = input.prioridad ?? ticket.prioridad;
+
+    // La OT nacida de una conversión tiene SU PROPIO reloj de SLA: fecha_ingreso = ahora (no la
+    // del ticket) y su propio vencimiento de resolución (el ticket seguía teniendo el suyo, de
+    // "contestar al cliente"; son dos cosas distintas). Mismo motivo que crearOt en ot.service.ts
+    // para fijar fechaIngreso explícita antes del INSERT en vez del DEFAULT de la columna.
+    const fechaIngresoOt = await ahoraDb(m);
+    const slaResolucionVenceEn = await calcularVencimientoOt(m, prioridad, fechaIngresoOt);
 
     const ot = await m.save(
       Ot,
@@ -73,15 +82,17 @@ export async function convertirATicketOt(actor: UsuarioActor, ticketId: string, 
         clienteId: esInterna ? null : clienteId,
         areaInterna: esInterna ? (input.areaInterna ?? null) : null,
         categoria: input.categoria,
-        prioridad: input.prioridad ?? ticket.prioridad,
+        prioridad,
         origen,
         ubicacion: input.ubicacion ?? null,
         solicitanteNombre: ticket.solicitanteNombre ?? null,
         solicitanteContacto: ticket.solicitanteEmail ?? ticket.solicitanteTelefono ?? null,
+        fechaIngreso: fechaIngresoOt,
         fechaEstimadaTermino: input.fechaEstimadaTermino ?? null,
         estado: EstadoOt.INGRESADO,
         recepcionadoPorId: ticket.recepcionadoPorId, // quien recibió el TICKET, nunca quien convierte
         responsableActualId: ticket.responsableActualId,
+        slaResolucionVenceEn,
       }),
     );
 

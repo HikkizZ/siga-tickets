@@ -11,7 +11,9 @@ import { adjuntoRouter } from "../routes/adjunto.routes.js";
 import { authRouter } from "../routes/auth.routes.js";
 import { clienteRouter } from "../routes/cliente.routes.js";
 import { cotizacionRouter } from "../routes/cotizacion.routes.js";
+import { notificacionRouter } from "../routes/notificacion.routes.js";
 import { otRouter } from "../routes/ot.routes.js";
+import { slaRouter } from "../routes/sla.routes.js";
 import { ticketRouter } from "../routes/ticket.routes.js";
 import { usuarioRouter } from "../routes/usuario.routes.js";
 
@@ -38,6 +40,8 @@ app.use("/api/v1/ots", otRouter);
 app.use("/api/v1/tickets", ticketRouter);
 app.use("/api/v1/cotizaciones", cotizacionRouter);
 app.use("/api/v1/adjuntos", adjuntoRouter);
+app.use("/api/v1/sla", slaRouter);
+app.use("/api/v1/notificaciones", notificacionRouter);
 
 // Deben ir al final: el 404 para rutas no montadas y el manejador central de errores.
 app.use(notFound);

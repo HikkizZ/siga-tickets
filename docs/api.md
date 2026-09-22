@@ -1,6 +1,6 @@
-# siga-ot — Contrato de la API (Fases 0 a 3)
+# siga-ot — Contrato de la API (Fases 0 a 4)
 
-Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos), Fase 2 (cotizaciones) y Fase 3 (tickets: hilo, tomar/derivar, conversión a OT) implementadas.
+Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos), Fase 2 (cotizaciones), Fase 3 (tickets: hilo, tomar/derivar, conversión a OT) y Fase 4 (SLA en horas hábiles + notificaciones) implementadas.
 
 ## Convenciones
 
@@ -170,7 +170,7 @@ Mismos filtros que el listado (sin paginación ni orden). Devuelve siempre las 6
 - `eventos`: más recientes primero (timeline).
 - `tickets` (Fase 3): tickets vinculados vía `ticket_ot` (conversión o vínculo manual), el de origen primero (`esOrigen: true`); `[]` si no hay ninguno.
 - `cotizaciones` (Fase 2): **todas** las cotizaciones de la OT (no solo la principal), ordenadas por `version` descendente. El detalle completo de cada una (cliente, timeline propio) está en `GET /cotizaciones/:id`.
-- `slaEstado`/`slaResolucionVenceEn`: la Fase 1 no los calcula (llegan en la Fase 4).
+- `slaEstado`/`slaResolucionVenceEn`: calculados desde la Fase 4 (`fechaIngreso` + horas hábiles de resolución según la prioridad; ver sección "SLA y notificaciones (Fase 4)" más abajo). Antes de la Fase 4 quedaban en su default (`en_plazo`/`null`).
 
 ### PATCH /ots/:id · tecnico (responsable o colaborador)
 
@@ -290,9 +290,9 @@ Body `{ "estado": "enviada" }`. Transiciones válidas: `borrador→enviada`, `en
 
 ---
 
-## Tickets (Fase 3)
+## Tickets (Fase 3, SLA extendido en Fase 4)
 
-Panel interno únicamente (`/api/v1`, JWT). Fuera de alcance de esta fase: portal público, ingesta/envío de correo, cálculo real de SLA (los campos `sla_*` quedan con su default, igual que `ot` en la Fase 1), API de lectura de notificaciones (se insertan filas en `notificacion`, igual que la derivación de OT, pero no hay endpoint para leerlas todavía).
+Panel interno únicamente (`/api/v1`, JWT). Fuera de alcance: portal público, ingesta/envío de correo (fases 5-6). El cálculo de SLA (`slaEstado`, `slaResolucionVenceEn`, `slaRespuestaVenceEn`) y la lectura de notificaciones se agregaron en la Fase 4 — ver la sección "SLA y notificaciones (Fase 4)" más abajo.
 
 **Sin colaborador**: a diferencia de OT, el esquema no tiene `ticket_colaborador`. Todo lo que en la matriz de la sección 6 del diseño dice "responsable o colaborador" para un ticket es, en la implementación, solo "responsable actual" (ver tabla de permisos por fila más arriba).
 
@@ -339,7 +339,8 @@ GET /api/v1/tickets?sinAsignar=true&prioridad=alta&orden=fechaIngreso&dir=asc
   "fechaIngreso": "…", "recepcionadoPor": { "id": "…", "nombre": "…" },
   "responsable": { "id": "…", "nombre": "…" },
   "primeraRespuestaEn": "…|null", "resueltoEn": null, "cerradoEn": null,
-  "slaEstado": "en_plazo", "creadoEn": "…", "actualizadoEn": "…",
+  "slaEstado": "en_plazo", "slaResolucionVenceEn": "…|null", "slaRespuestaVenceEn": "…|null",
+  "creadoEn": "…", "actualizadoEn": "…",
   "cadenaResponsables": [{
     "id": "…", "usuario": { "id": "…", "nombre": "…" },
     "desde": "…", "hasta": "…|null", "duracionSeg": 120, "actual": true,
@@ -442,6 +443,79 @@ curl -H "Authorization: Bearer $TOKEN" -F entidadTipo=ticket -F entidadId=$TICKE
 ### GET /adjuntos/:id/descargar · lectura
 
 Stream autenticado (el frontend debe pedirlo con el token, p. ej. `fetch` + `blob`, no con un `<a href>` sin cabecera). Respuesta con `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Cache-Control: private, no-store`. Errores: `404 ADJUNTO_NO_ENCONTRADO`, `409 ADJUNTO_NO_DISPONIBLE` (estado distinto de `limpio`).
+
+---
+
+## SLA y notificaciones (Fase 4)
+
+El vencimiento de SLA (`slaResolucionVenceEn` en OT; `slaResolucionVenceEn`/`slaRespuestaVenceEn` en ticket) se calcula al crear la entidad y se recalcula al cambiar la prioridad (siempre desde `fechaIngreso`, nunca desde "ahora"), al editar `sla_config` (en lote, solo lo abierto de esa prioridad) y al cerrar una pausa de SLA. `sla_estado` (`en_plazo|por_vencer|vencida`) lo actualiza el worker cada 5 min (`jobs/slaJob.ts::evaluarSla`, programado con `node-cron` en `api/worker.ts`; también corre una vez al arrancar el proceso), nunca las escrituras directas. Detalle completo del diseño, desviaciones y ejemplos de `sumarHorasHabiles` en `backend-diseno.md` sección 3.
+
+### GET /sla/config · lectura
+
+`200 { data: [{ prioridad, horasResolucion, horasPrimeraRespuesta, usarHorasHabiles, pausarEnEsperaCliente, umbralPorVencer }] }` (las 3 filas, `alta|media|baja`).
+
+### PUT /sla/config · admin
+
+```json
+{ "configs": [
+  { "prioridad": "alta", "horasResolucion": 24, "horasPrimeraRespuesta": 2, "usarHorasHabiles": true, "pausarEnEsperaCliente": true, "umbralPorVencer": 0.2 }
+] }
+```
+- `configs`: 1 a 3 filas, sin repetir `prioridad`; todos los campos de cada fila son opcionales salvo `prioridad` (solo se actualiza lo enviado). `horasResolucion`/`horasPrimeraRespuesta`: entero > 0. `umbralPorVencer`: decimal en (0, 1]. Fuera de rango → `400 VALIDATION_ERROR`. `500`/defensivo interno: `400 SLA_CONFIG_INVALIDO` si la prioridad no tiene fila (no debería ocurrir: la semilla siembra las 3 y Zod ya restringe el enum).
+- Por cada prioridad editada, recalcula en la MISMA transacción el vencimiento de toda OT/ticket **abierto** (no terminal) de esa prioridad, desde su propia `fechaIngreso`.
+- → `200 { data: [...] }` (mismo formato que el GET, con los 3 valores ya actualizados).
+
+### GET /sla/feriados · lectura
+
+`200 { data: [{ fecha, nombre, irrenunciable }] }` ordenado por fecha.
+
+### POST /sla/feriados · admin
+
+Body `{ "fecha": "2026-09-18", "nombre": "Fiestas Patrias", "irrenunciable": true }` (`irrenunciable` opcional, por defecto `false`) → `201 { data: { fecha, nombre, irrenunciable } }`. `fecha` duplicada → `409 FERIADO_YA_EXISTE`.
+
+### DELETE /sla/feriados/:fecha · admin
+
+`200 { data: null }`. Fecha inexistente → `404 FERIADO_NO_ENCONTRADO`. Sin endpoint para editar `calendario_laboral` en esta fase (el horario semanal se siembra por migración; se edita solo por script/BD).
+
+---
+
+## Notificaciones (Fase 4)
+
+`Notificacion`: `{ id, tipo, entidadTipo, entidadId, titulo, cuerpo, leidaEn, creadoEn }`. `tipo` incluye `derivacion` (ya existía desde la Fase 1/3) y, nuevas de esta fase, `sla_por_vencer`/`sla_vencida` (las genera `evaluarSla`, solo en el instante en que `slaEstado` transiciona a uno de esos dos valores, y solo si la entidad tiene responsable actual).
+
+### GET /notificaciones — lista paginada · cualquiera
+
+Solo las del usuario autenticado (nunca las de otro). Query: `page`, `perPage` (mismos defaults que el resto de la API), `soloNoLeidas` (booleano). Orden `creadoEn DESC`.
+
+```
+GET /api/v1/notificaciones?soloNoLeidas=true
+```
+→ `200 { data: [Notificacion], meta: { page, perPage, total } }`.
+
+### GET /notificaciones/resumen · cualquiera
+
+Panorama operativo de **todo el equipo** (no solo lo propio del actor — decisión de esta fase, ver `backend-diseno.md`; si se prefiere que sea solo lo propio, queda como cambio menor pendiente). Cada campo es `{ total, items }`, con `items` limitado a los 5 primeros `{id, numero}` (para que el frontend pueda enlazar directo sin otra consulta):
+
+```json
+{ "status": "ok", "data": {
+  "otVencidas": { "total": 2, "items": [{ "id": "…", "numero": "OT-1042" }] },
+  "otPrioridadAltaAbiertas": { "total": 1, "items": [...] },
+  "otPendientesCotizarOAprobar": { "total": 3, "items": [...] },
+  "ticketsNuevosSinResponder": { "total": 5, "items": [...] }
+} }
+```
+- `otVencidas`: `sla_estado='vencida'` y no terminal.
+- `otPrioridadAltaAbiertas`: `prioridad='alta'` y no terminal.
+- `otPendientesCotizarOAprobar`: `estado='en_cotizacion'` **o** alguna cotización propia en `estado='enviada'`.
+- `ticketsNuevosSinResponder`: `estado='nuevo'`.
+
+### POST /notificaciones/:id/leer · cualquiera
+
+Marca la notificación como leída (`leidaEn=ahora`, solo si aún era `null`; repetir es un no-op) → `200 { data: null }`. Si el id no existe **o** es de otro usuario, el código es el mismo (`404 NOTIFICACION_NO_ENCONTRADA`) a propósito: nunca se revela con el código si la notificación existe pero es ajena.
+
+### POST /notificaciones/leer-todas · cualquiera
+
+Marca todas las no leídas del actor → `200 { data: null }`. No toca las de otro usuario.
 
 ---
 

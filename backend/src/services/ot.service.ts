@@ -16,6 +16,7 @@ import type { FiltrosOt } from "../validations/ot.validation.js";
 import { registrarEventoOt } from "./evento.service.js";
 import { enTransaccion, siguienteFolio, type ManagerTransaccional } from "./folio.service.js";
 import { ahoraDb, bloquearOt, contextoOt, otNoEncontrada, usuarioAsignable, type UsuarioActor, type UsuarioRef } from "./ot.common.js";
+import { calcularVencimientoOt } from "./sla.calculo.service.js";
 import { toAdjuntoDto } from "./adjunto.dto.js";
 
 const ESTADOS_ORDEN: EstadoOt[] = [
@@ -383,6 +384,12 @@ export async function crearOt(actor: UsuarioActor, input: CrearOtInput) {
     for (const cid of colaboradorIds) await usuarioAsignable(m, cid, "COLABORADOR_INVALIDO", "Cada colaborador");
 
     const numero = await siguienteFolio(m, "OT");
+    // fechaIngreso se fija explícitamente (en vez de dejar el DEFAULT SYSDATETIMEOFFSET() de la
+    // columna) porque el vencimiento de SLA de la MISMA fila se calcula a partir de ella: se
+    // necesita el valor antes del INSERT, no después (ver ticket.conversion.service.ts, mismo
+    // patrón). Sigue siendo la hora del reloj de la BD (ahoraDb usa SYSDATETIMEOFFSET()).
+    const fechaIngreso = await ahoraDb(m);
+    const slaResolucionVenceEn = await calcularVencimientoOt(m, input.prioridad, fechaIngreso);
     const ot = await m.save(
       Ot,
       m.create(Ot, {
@@ -399,10 +406,12 @@ export async function crearOt(actor: UsuarioActor, input: CrearOtInput) {
         ubicacion: input.ubicacion ?? null,
         solicitanteNombre: input.solicitanteNombre ?? null,
         solicitanteContacto: input.solicitanteContacto ?? null,
+        fechaIngreso,
         fechaEstimadaTermino: input.fechaEstimadaTermino ?? null,
         estado: EstadoOt.INGRESADO,
         recepcionadoPorId: actor.id, // siempre el usuario autenticado, nunca el body
         responsableActualId: responsableId,
+        slaResolucionVenceEn,
       }),
     );
 
@@ -473,6 +482,8 @@ export async function actualizarOt(actor: UsuarioActor, id: string, cambios: Act
     if (cambios.prioridad !== undefined && cambios.prioridad !== ot.prioridad) {
       prioridadAnterior = ot.prioridad;
       ot.prioridad = cambios.prioridad;
+      // Recalcula desde la fecha_ingreso ORIGINAL (no desde ahora), con la nueva prioridad.
+      ot.slaResolucionVenceEn = await calcularVencimientoOt(m, ot.prioridad, ot.fechaIngreso);
     }
 
     if (editados.length === 0 && prioridadAnterior === null) return; // nada cambió: sin UPDATE ni evento

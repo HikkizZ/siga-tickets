@@ -50,6 +50,17 @@ export async function limpiarBD(): Promise<void> {
   await AppDataSource.query(
     "UPDATE folio_counter SET ultimo = CASE serie WHEN 'TK' THEN 0 WHEN 'OT' THEN 1040 WHEN 'COT' THEN 2040 END",
   );
+  // sla_config está en CON_SEMILLA (no se trunca): la Fase 4 agrega PUT /sla/config, que lo muta,
+  // así que hay que devolverlo a la semilla entre tests o un test dejaría el valor filtrado hacia
+  // los siguientes archivos (la suite comparte una sola BD, en serie).
+  await AppDataSource.query(`
+    UPDATE sla_config SET
+      horas_resolucion = CASE prioridad WHEN 'alta' THEN 24 WHEN 'media' THEN 72 ELSE 120 END,
+      horas_primera_respuesta = CASE prioridad WHEN 'alta' THEN 2 WHEN 'media' THEN 8 ELSE 24 END,
+      usar_horas_habiles = 1,
+      pausar_en_espera_cliente = 1,
+      umbral_por_vencer = 0.20
+  `);
 }
 
 export async function crearUsuarioTest(

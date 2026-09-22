@@ -15,6 +15,8 @@ import type { FiltrosTicket } from "../validations/ticket.validation.js";
 import { registrarEventoTicket } from "./evento.service.js";
 import { enTransaccion, siguienteFolio, type ManagerTransaccional } from "./folio.service.js";
 import { ahoraDb, type UsuarioActor, type UsuarioRef } from "./ot.common.js";
+import { calcularVencimientosTicket } from "./sla.calculo.service.js";
+import { abrirPausaSiCorresponde, cerrarPausaYCorrerVencimientos } from "./sla.pausa.service.js";
 import { bloquearTicket, contextoTicket, ticketNoEncontrado } from "./ticket.common.js";
 import { toAdjuntoDto, type AdjuntoDto } from "./adjunto.dto.js";
 
@@ -199,6 +201,11 @@ export async function obtenerDetalleTicket(id: string) {
     resueltoEn: ticket.resueltoEn,
     cerradoEn: ticket.cerradoEn,
     slaEstado: ticket.slaEstado,
+    // Fase 4: antes de la primera respuesta, slaEstado refleja slaRespuestaVenceEn; después,
+    // slaResolucionVenceEn (ver jobs/slaJob.ts). Se exponen ambos, igual que ot.service.ts expone
+    // slaResolucionVenceEn (antes de la Fase 4 estos campos no se calculaban y no se exponían).
+    slaResolucionVenceEn: ticket.slaResolucionVenceEn,
+    slaRespuestaVenceEn: ticket.slaRespuestaVenceEn,
     creadoEn: ticket.creadoEn,
     actualizadoEn: ticket.actualizadoEn,
     cadenaResponsables: tramos.map((t) => ({
@@ -266,6 +273,10 @@ export async function crearTicket(actor: UsuarioActor, input: CrearTicketInput) 
     if (input.clienteId) await exigirClienteActivoTicket(m, input.clienteId);
 
     const numero = await siguienteFolio(m, "TK");
+    // fechaIngreso explícita (mismo motivo que crearOt en ot.service.ts): los dos vencimientos de
+    // SLA de la MISMA fila se calculan a partir de ella, antes del INSERT.
+    const fechaIngreso = await ahoraDb(m);
+    const { slaResolucionVenceEn, slaRespuestaVenceEn } = await calcularVencimientosTicket(m, input.prioridad, fechaIngreso);
     const ticket = await m.save(
       Ticket,
       m.create(Ticket, {
@@ -281,8 +292,11 @@ export async function crearTicket(actor: UsuarioActor, input: CrearTicketInput) 
         canal: input.canal as CanalTicket,
         prioridad: input.prioridad,
         estado: EstadoTicket.NUEVO,
+        fechaIngreso,
         recepcionadoPorId: actor.id, // siempre el usuario autenticado, nunca el body
         responsableActualId: null, // nace sin responsable (decisión 0.4 del diseño)
+        slaResolucionVenceEn,
+        slaRespuestaVenceEn,
       }),
     );
     await registrarEventoTicket(m, ticketId, actor.id, {
@@ -321,6 +335,10 @@ export async function actualizarTicket(actor: UsuarioActor, id: string, cambios:
     if (cambios.prioridad !== undefined && cambios.prioridad !== ticket.prioridad) {
       prioridadAnterior = ticket.prioridad;
       ticket.prioridad = cambios.prioridad;
+      // Recalcula ambos vencimientos desde la fecha_ingreso ORIGINAL (no desde ahora).
+      const venc = await calcularVencimientosTicket(m, ticket.prioridad, ticket.fechaIngreso);
+      ticket.slaResolucionVenceEn = venc.slaResolucionVenceEn;
+      ticket.slaRespuestaVenceEn = venc.slaRespuestaVenceEn;
     }
 
     if (editados.length === 0 && prioridadAnterior === null) return; // nada cambió: sin UPDATE ni evento
@@ -346,6 +364,15 @@ export async function cambiarEstadoTicket(actor: UsuarioActor, id: string, nuevo
     // Se fijan una sola vez: retroceder de estado más adelante no los borra.
     if (nuevo === EstadoTicket.RESUELTO && ticket.resueltoEn === null) ticket.resueltoEn = ahora;
     if (nuevo === EstadoTicket.CERRADO && ticket.cerradoEn === null) ticket.cerradoEn = ahora;
+
+    // Pausa del SLA (Fase 4, solo tickets): al entrar a esperando_cliente se abre (si la prioridad
+    // lo tiene configurado); al salir se cierra y se corren los vencimientos por lo que duró.
+    if (nuevo === EstadoTicket.ESPERANDO_CLIENTE) {
+      await abrirPausaSiCorresponde(m, ticket, ahora);
+    } else if (anterior === EstadoTicket.ESPERANDO_CLIENTE) {
+      await cerrarPausaYCorrerVencimientos(m, ticket, ahora);
+    }
+
     await m.save(Ticket, ticket);
     await registrarEventoTicket(m, id, actor.id, { tipo: "estado_cambiado", de: anterior, a: nuevo });
   });
