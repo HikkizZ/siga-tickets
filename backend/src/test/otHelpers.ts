@@ -51,8 +51,28 @@ export async function crearOtApi(auth: string, clienteId: string, extra: Record<
   return res.body.data as {
     id: string;
     numero: string;
+    titulo: string;
     responsable: { id: string };
     cadenaResponsables: Array<{ id: string }>;
+  };
+}
+
+export const cotizacionBody = (extra: Record<string, unknown> = {}) => ({ montoClp: 100000, ...extra });
+
+// Crea una cotización por la API y devuelve el detalle (falla si el POST no dio 201).
+export async function crearCotizacionApi(auth: string, extra: Record<string, unknown> = {}) {
+  const res = await request(app).post("/api/v1/cotizaciones").set("Authorization", auth).send(cotizacionBody(extra));
+  if (res.status !== 201) throw new Error(`crearCotizacionApi falló: ${res.status} ${JSON.stringify(res.body)}`);
+  return res.body.data as {
+    id: string;
+    numero: string;
+    otId?: string;
+    ot: { id: string; numero: string; titulo: string } | null;
+    cliente: { id: string; nombre: string } | null;
+    montoClp: number;
+    estado: string;
+    version: number;
+    esPrincipal: boolean;
   };
 }
 

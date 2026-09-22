@@ -6,7 +6,7 @@ import { AppError } from "../errors/AppError.js";
 import { conflictoConcurrencia, numeroErrorSql } from "../errors/dbErrors.js";
 import { conectarBD, limpiarBD } from "../test/helpers.js";
 import { crearSesionNombrada } from "../test/otHelpers.js";
-import { eventoOtSchema, registrarEventoOt } from "./evento.service.js";
+import { eventoCotizacionSchema, eventoOtSchema, registrarEventoCotizacion, registrarEventoOt } from "./evento.service.js";
 import { enTransaccion } from "./folio.service.js";
 import { escaparLike } from "./ot.service.js";
 
@@ -44,6 +44,50 @@ describe("payload de eventos", () => {
     ["ot_editada sin campos", { tipo: "ot_editada", campos: [] }],
   ])("rechaza: %s", (_n, v) => {
     expect(eventoOtSchema.safeParse(v).success).toBe(false);
+  });
+
+  it("fase 2: los tipos cotizacion_creada/vinculada/estado_cambiado del lado OT validan su forma", () => {
+    const validos = [
+      { tipo: "cotizacion_creada", cotizacionId: id(), numero: "COT-2041" },
+      { tipo: "cotizacion_vinculada", cotizacionId: id(), numero: "COT-2041" },
+      { tipo: "cotizacion_estado_cambiado", cotizacionId: id(), de: "borrador", a: "enviada" },
+    ];
+    for (const v of validos) expect(eventoOtSchema.safeParse(v).success, v.tipo).toBe(true);
+  });
+
+  it("eventoCotizacionSchema: cotizacion_editada y cotizacion_estado_cambiado", () => {
+    const validos = [
+      { tipo: "cotizacion_editada", campos: ["montoClp"], montoClpAntes: 100, montoClpDespues: 200 },
+      { tipo: "cotizacion_estado_cambiado", de: "borrador", a: "enviada" },
+    ];
+    for (const v of validos) expect(eventoCotizacionSchema.safeParse(v).success, v.tipo).toBe(true);
+  });
+
+  it.each([
+    ["tipo desconocido", { tipo: "inventado" }],
+    ["editada sin campos", { tipo: "cotizacion_editada", campos: [], montoClpAntes: 1, montoClpDespues: 1 }],
+    ["editada con campo de más", { tipo: "cotizacion_editada", campos: ["montoClp"], montoClpAntes: 1, montoClpDespues: 1, extra: true }],
+    ["la forma del lado OT (con cotizacionId) no cuela en el lado cotización", { tipo: "cotizacion_estado_cambiado", cotizacionId: randomUUID(), de: "borrador", a: "enviada" }],
+  ])("eventoCotizacionSchema rechaza: %s", (_n, v) => {
+    expect(eventoCotizacionSchema.safeParse(v).success).toBe(false);
+  });
+
+  it("registrarEventoCotizacion valida antes de insertar y usa entidad_tipo='cotizacion'", async () => {
+    const admin = await crearSesionNombrada(Rol.ADMIN, "admin_t");
+    const cotizacionId = id();
+
+    await enTransaccion(AppDataSource, (m) =>
+      registrarEventoCotizacion(m, cotizacionId, admin.usuario.id, { tipo: "cotizacion_estado_cambiado", de: "borrador", a: "enviada" }),
+    );
+
+    const filas = await AppDataSource.query(`SELECT entidad_tipo, entidad_id, tipo FROM evento WHERE entidad_id = @0`, [cotizacionId]);
+    expect(filas).toHaveLength(1);
+    expect(filas[0].entidad_tipo).toBe("cotizacion");
+    expect(filas[0].tipo).toBe("cotizacion_estado_cambiado");
+
+    await expect(
+      enTransaccion(AppDataSource, (m) => registrarEventoCotizacion(m, id(), admin.usuario.id, { tipo: "cotizacion_editada" } as never)),
+    ).rejects.toThrow();
   });
 
   it("registrarEventoOt valida antes de insertar (nada se escribe con un payload inválido)", async () => {

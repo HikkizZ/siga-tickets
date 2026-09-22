@@ -20,6 +20,8 @@ import {
 import { actualizarOt, cambiarEstadoOt, crearOt, kanbanOts, listarOts, obtenerDetalleOt } from "../services/ot.service.js";
 import { derivarOt } from "../services/ot.derivacion.service.js";
 import { agregarColaborador, quitarColaborador } from "../services/ot.colaborador.service.js";
+import { vincularCotizacion } from "../services/cotizacion.service.js";
+import { vincularCotizacionReq } from "../validations/cotizacion.validation.js";
 import {
   actualizarEtapa,
   crearComentario,
@@ -80,6 +82,11 @@ export async function quitarColaboradorController(req: Request, res: Response): 
   const { params } = validado(req, quitarColaboradorReq);
   await quitarColaborador(actor(req), params.id, params.usuarioId);
   res.json({ status: "ok", data: null });
+}
+
+export async function vincularCotizacionController(req: Request, res: Response): Promise<void> {
+  const { params, body } = validado(req, vincularCotizacionReq);
+  res.json({ status: "ok", data: await vincularCotizacion(actor(req), params.id, body.cotizacionId) });
 }
 
 export async function listarComentariosController(req: Request, res: Response): Promise<void> {

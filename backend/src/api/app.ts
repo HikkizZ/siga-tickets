@@ -10,6 +10,7 @@ import { requestLogger } from "../middlewares/requestLogger.js";
 import { adjuntoRouter } from "../routes/adjunto.routes.js";
 import { authRouter } from "../routes/auth.routes.js";
 import { clienteRouter } from "../routes/cliente.routes.js";
+import { cotizacionRouter } from "../routes/cotizacion.routes.js";
 import { otRouter } from "../routes/ot.routes.js";
 import { usuarioRouter } from "../routes/usuario.routes.js";
 
@@ -33,6 +34,7 @@ app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/usuarios", usuarioRouter);
 app.use("/api/v1/clientes", clienteRouter);
 app.use("/api/v1/ots", otRouter);
+app.use("/api/v1/cotizaciones", cotizacionRouter);
 app.use("/api/v1/adjuntos", adjuntoRouter);
 
 // Deben ir al final: el 404 para rutas no montadas y el manejador central de errores.

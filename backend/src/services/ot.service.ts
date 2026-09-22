@@ -224,6 +224,16 @@ export const toComentarioDto = (c: ComentarioOt) => ({
   creadoEn: c.creadoEn,
 });
 
+interface FilaCotizacionOt {
+  id: string;
+  numero: string;
+  monto_clp: string;
+  fecha: string;
+  estado: string;
+  version: number;
+  es_principal: boolean;
+}
+
 export async function obtenerDetalleOt(id: string) {
   const ot = await AppDataSource.getRepository(Ot).findOne({
     where: { id },
@@ -231,7 +241,7 @@ export async function obtenerDetalleOt(id: string) {
   });
   if (!ot) throw otNoEncontrada();
 
-  const [colabs, tramos, etapas, horas, comentarios, adjuntos, eventos] = await Promise.all([
+  const [colabs, tramos, etapas, horas, comentarios, adjuntos, eventos, cotizaciones] = await Promise.all([
     AppDataSource.getRepository(OtColaborador).find({ where: { otId: id }, relations: { usuario: true }, order: { creadoEn: "ASC" } }),
     AppDataSource.getRepository(Asignacion).find({
       where: { entidadTipo: EntidadAsignable.OT, entidadId: id },
@@ -251,6 +261,13 @@ export async function obtenerDetalleOt(id: string) {
       relations: { actor: true },
       order: { ocurridoEn: "DESC", id: "DESC" },
     }),
+    // Consulta cruda (no el repositorio de Cotizacion) para evitar un import circular con
+    // cotizacion.service.ts, que ya importa de este módulo (escaparLike, obtenerDetalleOt).
+    AppDataSource.query(
+      `SELECT id, numero, monto_clp, CONVERT(varchar(10), fecha, 23) AS fecha, estado, version, es_principal
+       FROM cotizacion WHERE ot_id = @0 ORDER BY version DESC`,
+      [id],
+    ) as Promise<FilaCotizacionOt[]>,
   ]);
 
   const ahora = Date.now();
@@ -301,8 +318,16 @@ export async function obtenerDetalleOt(id: string) {
       payload: e.payload,
       ocurridoEn: e.ocurridoEn,
     })),
-    // Se llenan en las fases 2 (cotizaciones) y 3 (tickets).
-    cotizaciones: [],
+    cotizaciones: cotizaciones.map((c) => ({
+      id: c.id.toLowerCase(),
+      numero: c.numero,
+      montoClp: Number(c.monto_clp),
+      estado: c.estado,
+      version: c.version,
+      esPrincipal: !!c.es_principal,
+      fecha: c.fecha,
+    })),
+    // Se llena en la fase 3 (tickets).
     tickets: [],
   };
 }

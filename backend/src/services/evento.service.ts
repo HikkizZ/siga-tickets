@@ -22,12 +22,46 @@ export const eventoOtSchema = z.discriminatedUnion("tipo", [
   z.object({ tipo: z.literal("etapa_eliminada"), etapaId: id }).strict(),
   z.object({ tipo: z.literal("adjunto_agregado"), adjuntoId: id, mime: z.string(), tamanoBytes: z.number().int() }).strict(),
   z.object({ tipo: z.literal("ot_editada"), campos: z.array(z.string()).min(1) }).strict(),
+  // Fase 2: la OT se entera de que una cotización nació, se vinculó o cambió de estado; el
+  // detalle de la cotización se lee aparte con eventoCotizacionSchema. `cotizacionId` es la
+  // referencia que GET /cotizaciones/:id usa para reconstruir su propio timeline (ver más abajo).
+  z.object({ tipo: z.literal("cotizacion_creada"), cotizacionId: id, numero: z.string() }).strict(),
+  z.object({ tipo: z.literal("cotizacion_vinculada"), cotizacionId: id, numero: z.string() }).strict(),
+  z.object({ tipo: z.literal("cotizacion_estado_cambiado"), cotizacionId: id, de: estado, a: estado }).strict(),
 ]);
 
 export type EventoOt = z.input<typeof eventoOtSchema>;
 
-// Se inserta con SQL directo: evento tiene un trigger y TypeORM añadiría OUTPUT (error 334 de
-// SQL Server con triggers). Debe llamarse en la MISMA transacción que el cambio auditado.
+// Payload por tipo de evento propio de una cotización (entidad_tipo='cotizacion').
+export const eventoCotizacionSchema = z.discriminatedUnion("tipo", [
+  z.object({
+    tipo: z.literal("cotizacion_editada"),
+    campos: z.array(z.string()).min(1),
+    montoClpAntes: z.number().int(),
+    montoClpDespues: z.number().int(),
+  }).strict(),
+  z.object({ tipo: z.literal("cotizacion_estado_cambiado"), de: estado, a: estado }).strict(),
+]);
+
+export type EventoCotizacion = z.input<typeof eventoCotizacionSchema>;
+
+// Inserción cruda compartida por ambas entidades auditables: evento tiene un trigger y TypeORM
+// añadiría OUTPUT (error 334 de SQL Server con triggers). Debe llamarse en la MISMA transacción
+// que el cambio auditado.
+async function insertarEvento(
+  manager: ManagerTransaccional,
+  entidadTipo: EntidadEvento,
+  entidadId: string,
+  actorId: string,
+  tipo: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await manager.query(
+    `INSERT INTO evento (entidad_tipo, entidad_id, tipo, actor_id, payload) VALUES (@0, @1, @2, @3, @4)`,
+    [entidadTipo, entidadId, tipo, actorId, JSON.stringify(payload)],
+  );
+}
+
 export async function registrarEventoOt(
   manager: ManagerTransaccional,
   otId: string,
@@ -35,8 +69,17 @@ export async function registrarEventoOt(
   evento: EventoOt,
 ): Promise<void> {
   const { tipo, ...payload } = eventoOtSchema.parse(evento);
-  await manager.query(
-    `INSERT INTO evento (entidad_tipo, entidad_id, tipo, actor_id, payload) VALUES (@0, @1, @2, @3, @4)`,
-    [EntidadEvento.OT, otId, tipo, actorId, JSON.stringify(payload)],
-  );
+  await insertarEvento(manager, EntidadEvento.OT, otId, actorId, tipo, payload);
+}
+
+// Timeline propio de una cotización (Fase 2). GET /cotizaciones/:id la combina con los eventos de
+// la OT cuyo payload la referencia (`cotizacionId`) — ver cotizacion.service.ts.
+export async function registrarEventoCotizacion(
+  manager: ManagerTransaccional,
+  cotizacionId: string,
+  actorId: string,
+  evento: EventoCotizacion,
+): Promise<void> {
+  const { tipo, ...payload } = eventoCotizacionSchema.parse(evento);
+  await insertarEvento(manager, EntidadEvento.COTIZACION, cotizacionId, actorId, tipo, payload);
 }

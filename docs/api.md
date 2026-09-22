@@ -1,6 +1,6 @@
-# siga-ot — Contrato de la API (Fases 0 y 1)
+# siga-ot — Contrato de la API (Fases 0, 1 y 2)
 
-Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes) y Fase 1 (OT núcleo, adjuntos) implementadas.
+Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos) y Fase 2 (cotizaciones) implementadas.
 
 ## Convenciones
 
@@ -150,10 +150,14 @@ Mismos filtros que el listado (sin paginación ni orden). Devuelve siempre las 6
   "comentarios": [{ "id": "…", "autor": {…}, "cuerpo": "…", "visibleCliente": false, "creadoEn": "…" }],
   "adjuntos": [{ "id": "…", "nombre": "informe.pdf", "mime": "application/pdf", "tamanoBytes": 1234, "estado": "limpio", "subidoPor": {…}, "creadoEn": "…" }],
   "eventos": [{ "id": "12", "tipo": "derivado", "actor": {…}, "payload": { }, "ocurridoEn": "…" }],
-  "cotizaciones": [], "tickets": [] }
+  "cotizaciones": [{
+    "id": "…", "numero": "COT-2042", "montoClp": 500000, "estado": "enviada",
+    "version": 2, "esPrincipal": true, "fecha": "2026-09-21" }],
+  "tickets": [] }
 ```
 - `cadenaResponsables`: orden cronológico; el tramo abierto lleva `actual: true`, `hasta: null` y `duracionSeg` = lo transcurrido hasta ahora; el primero tiene `motivoEntrada` y `derivadoPor` en `null`.
-- `eventos`: más recientes primero (timeline). `cotizaciones` y `tickets` se llenarán en las fases 2 y 3.
+- `eventos`: más recientes primero (timeline). `tickets` se llenará en la fase 3.
+- `cotizaciones` (Fase 2): **todas** las cotizaciones de la OT (no solo la principal), ordenadas por `version` descendente. El detalle completo de cada una (cliente, timeline propio) está en `GET /cotizaciones/:id`.
 - `slaEstado`/`slaResolucionVenceEn`: la Fase 1 no los calcula (llegan en la Fase 4).
 
 ### PATCH /ots/:id · tecnico (responsable o colaborador)
@@ -200,6 +204,78 @@ Body parcial: `titulo, descripcion, categoria, prioridad, ubicacion, solicitante
 - `DELETE /ots/:id/etapas/:etapaId` → `200 { data: null }`.
 - `fechaTermino < fechaInicio` → `400 VALIDATION_ERROR` (también si solo se envía una de las fechas y contradice la guardada). `404 ETAPA_NO_ENCONTRADA`.
 
+### POST /ots/:id/cotizaciones/vincular · gestion, admin (Fase 2)
+
+Liga una cotización **existente** (sin OT, o de otra OT) a esta OT. Body `{ "cotizacionId": "…" }`.
+
+- La cotización no puede estar `aprobada` ni `rechazada` si ya pertenecía a OTRA OT distinta → `409 COTIZACION_NO_VINCULABLE` (evita reasignar historial cerrado por error). Una cotización sin OT se vincula en cualquier estado; volver a vincular a la MISMA OT no hace nada raro (no reordena versión ni pisa nada).
+- Si la cotización no tenía `otId`, se le asigna `version = MAX(version de esa OT) + 1`; si ya tenía una OT (se está reasignando), conserva su `version`.
+- Si `esPrincipal` de la cotización es `true`, aplica la regla de "una sola principal": la que era principal de esta OT deja de serlo, en la misma transacción.
+- Evento `cotizacion_vinculada` en el timeline de la OT.
+- `404 OT_NO_ENCONTRADA` / `404 COTIZACION_NO_ENCONTRADA`.
+
+→ `200 { data: <Detalle de la OT> }` (mismo formato que `GET /ots/:id`, con la cotización ya en `cotizaciones`).
+
+---
+
+## Cotizaciones (Fase 2)
+
+A diferencia de OT, **no hay permiso por fila**: solo `gestion` y `admin` escriben (crear, editar, cambiar estado, vincular), sin excepción aunque un `tecnico` sea responsable o colaborador de la OT vinculada. Lectura (`GET`): cualquier rol autenticado, `lectura` incluido.
+
+`Cotizacion` (forma común de list/detalle, salvo lo indicado): `{ id, numero, ot: {id,numero,titulo}|null, cliente: {id,nombre}|null, montoClp, fecha, estado, version, esPrincipal, creadoEn, actualizadoEn }`. El detalle (`GET /cotizaciones/:id`) además trae `aprobadaEn` y `eventos`.
+
+### GET /cotizaciones — lista paginada · lectura
+
+Query: `page` (≥1, def. 1), `perPage` (1–100, def. 25), `orden` ∈ `numero | fecha | montoClp | estado | version | creadoEn | actualizadoEn` (def. `fecha`; otro valor → 400), `dir` = `asc|desc` (def. `desc`), y filtros `estado`, `clienteId`, `otId`, `q` (número o nombre de cliente; `%`, `_` y `[` literales, mismo escape que OT), `desde`/`hasta` (`YYYY-MM-DD`, sobre `fecha`).
+
+```
+GET /api/v1/cotizaciones?estado=enviada&orden=fecha&dir=desc&page=1&perPage=25
+```
+```json
+{ "status": "ok",
+  "data": [{
+    "id": "…", "numero": "COT-2042", "ot": { "id": "…", "numero": "OT-1041", "titulo": "…" },
+    "cliente": { "id": "…", "nombre": "…" }, "montoClp": 500000, "fecha": "2026-09-21",
+    "estado": "enviada", "version": 2, "esPrincipal": true,
+    "creadoEn": "…", "actualizadoEn": "…" }],
+  "meta": { "page": 1, "perPage": 25, "total": 1 } }
+```
+
+### POST /cotizaciones · gestion, admin
+
+```json
+{ "otId": "…", "clienteId": "…", "montoClp": 500000, "fecha": "2026-09-21", "esPrincipal": false }
+```
+Todos los campos son opcionales salvo `montoClp` (entero ≥ 0; negativo o decimal → `400`). `estado` no se acepta en el body: siempre nace en `borrador`.
+
+- Con `otId`: la OT debe existir (`404 OT_NO_ENCONTRADA`). Si la OT **no** es interna: sin `clienteId` se autocompleta con el de la OT; con `clienteId` que no coincide → `400 CLIENTE_NO_COINCIDE`. Si la OT **es** interna, no se exige `clienteId`.
+- Sin `otId`, `clienteId` es obligatorio (`400 VALIDATION_ERROR`).
+- `clienteId` (el dado o el autocompletado) debe ser un cliente existente y activo → `400 CLIENTE_INVALIDO`.
+- `version`: `MAX(version)+1` entre las cotizaciones de la misma OT, o `1` si no hay `otId` o es la primera de esa OT.
+- `esPrincipal: true`: si la OT ya tenía una principal, la anterior deja de serlo en la misma transacción (bloqueo explícito de la fila de la OT: dos altas "principal" simultáneas para la misma OT nunca dejan dos filas `esPrincipal: true`).
+- Folio `COT-xxxx` consecutivo sin huecos (`siguienteFolio`). Si hay `otId`, evento `cotizacion_creada` en el timeline de la OT.
+
+→ `201 { data: <Cotizacion> }`.
+
+### GET /cotizaciones/:id · lectura
+
+`data`: los campos comunes más `aprobadaEn` y `eventos` (el timeline propio de la cotización): eventos con `entidadTipo=cotizacion` de esta cotización (`cotizacion_editada`, `cotizacion_estado_cambiado`), más los eventos de la OT que **solo** existen ahí (`cotizacion_creada`, `cotizacion_vinculada` — referencian la cotización por `cotizacionId` en su payload). El cambio de estado se escribe una sola vez, del lado cotización, y por eso no se duplica al combinar ambos orígenes. `404 COTIZACION_NO_ENCONTRADA`.
+
+```json
+{ "id": "…", "numero": "COT-2042", "ot": {"id":"…","numero":"OT-1041","titulo":"…"}, "cliente": {"id":"…","nombre":"…"},
+  "montoClp": 500000, "fecha": "2026-09-21", "estado": "enviada", "version": 2, "esPrincipal": true,
+  "aprobadaEn": null, "creadoEn": "…", "actualizadoEn": "…",
+  "eventos": [{ "id": "9", "tipo": "cotizacion_estado_cambiado", "actor": {"id":"…","nombre":"…"}, "payload": {"de":"borrador","a":"enviada"}, "ocurridoEn": "…" }] }
+```
+
+### PATCH /cotizaciones/:id · gestion, admin
+
+Solo si `estado = 'borrador'` (`409 COTIZACION_ESTADO_INVALIDO` si no). Body parcial `{ montoClp?, fecha?, clienteId? }` (mismas validaciones que la creación; cambiar `clienteId` en una cotización con OT no interna exige que siga coincidiendo con el de la OT). Sin campos que cambien de verdad → `200` sin evento. Si algo cambia, evento `cotizacion_editada` con `campos` y `montoClpAntes`/`montoClpDespues`. `404 COTIZACION_NO_ENCONTRADA`.
+
+### POST /cotizaciones/:id/estado · gestion, admin
+
+Body `{ "estado": "enviada" }`. Transiciones válidas: `borrador→enviada`, `enviada→aprobada`, `enviada→rechazada`, `enviada→borrador`, `rechazada→enviada`. Cualquier otra (incluida la misma → la misma, o saltarse estados) → `409 TRANSICION_INVALIDA`. Al llegar a `aprobada` por primera vez fija `aprobadaEn` (no se pisa después). Evento `cotizacion_estado_cambiado` siempre del lado cotización; si tiene `otId`, se refleja también en el timeline de la OT (mismo `de`/`a`, más `cotizacionId`).
+
 ---
 
 ## Adjuntos
@@ -225,7 +301,11 @@ Stream autenticado (el frontend debe pedirlo con el token, p. ej. `fetch` + `blo
 
 ## Eventos de auditoría (`eventos[].tipo` en el detalle de OT)
 
-`creado`, `estado_cambiado {de,a}`, `prioridad_cambiada {de,a}`, `derivado {de,a,motivo,mantuvoComoColaborador}`, `comentario {comentarioId,visibleCliente}`, `horas_registradas {horaId,usuarioId,fecha,horas}`, `horas_eliminadas {horaId,usuarioId,horas}`, `colaborador_agregado|colaborador_quitado {usuarioId}`, `etapa_creada|etapa_eliminada {etapaId}`, `etapa_editada {etapaId,campos}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `ot_editada {campos}`. Los payloads guardan ids, no copias de datos personales.
+`creado`, `estado_cambiado {de,a}`, `prioridad_cambiada {de,a}`, `derivado {de,a,motivo,mantuvoComoColaborador}`, `comentario {comentarioId,visibleCliente}`, `horas_registradas {horaId,usuarioId,fecha,horas}`, `horas_eliminadas {horaId,usuarioId,horas}`, `colaborador_agregado|colaborador_quitado {usuarioId}`, `etapa_creada|etapa_eliminada {etapaId}`, `etapa_editada {etapaId,campos}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `ot_editada {campos}`, `cotizacion_creada {cotizacionId,numero}` (Fase 2, solo si la cotización nació con `otId`), `cotizacion_vinculada {cotizacionId,numero}` (Fase 2), `cotizacion_estado_cambiado {cotizacionId,de,a}` (Fase 2, reflejo del evento que ya vive en el timeline de la cotización). Los payloads guardan ids, no copias de datos personales.
+
+## Eventos de auditoría propios de una cotización (`eventos[].tipo` en `GET /cotizaciones/:id`)
+
+`cotizacion_editada {campos,montoClpAntes,montoClpDespues}`, `cotizacion_estado_cambiado {de,a}`. La creación y la vinculación no tienen copia del lado cotización: se leen desde el timeline de la OT (ver arriba) cuando la cotización tiene `otId`; sin `otId`, esos dos eventos simplemente no existen.
 
 ## Otros
 

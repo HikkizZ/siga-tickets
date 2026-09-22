@@ -20,6 +20,7 @@ import {
   otIdReq,
   quitarColaboradorReq,
 } from "../validations/ot.validation.js";
+import { vincularCotizacionReq } from "../validations/cotizacion.validation.js";
 import * as c from "../controllers/ot.controller.js";
 
 export const otRouter = Router();
@@ -50,3 +51,6 @@ otRouter.get("/:id/etapas", authorize(Rol.LECTURA), validate(otIdReq), c.listarE
 otRouter.post("/:id/etapas", authorize(Rol.TECNICO), validate(crearEtapaReq), c.crearEtapaController);
 otRouter.patch("/:id/etapas/:etapaId", authorize(Rol.TECNICO), validate(actualizarEtapaReq), c.actualizarEtapaController);
 otRouter.delete("/:id/etapas/:etapaId", authorize(Rol.TECNICO), validate(eliminarEtapaReq), c.eliminarEtapaController);
+
+// Fase 2 (cotizaciones): sin permiso por fila, solo gestion/admin (ver cotizacion.policy.ts).
+otRouter.post("/:id/cotizaciones/vincular", authorize(Rol.GESTION), validate(vincularCotizacionReq), c.vincularCotizacionController);
