@@ -7,6 +7,7 @@ import { EntidadAdjunto, EstadoTicket, TipoMensajeTicket } from "../entities/enu
 import { AppError } from "../errors/AppError.js";
 import { exigir, puedePublicarMensaje } from "../policies/ticket.policy.js";
 import { toAdjuntoDto } from "./adjunto.dto.js";
+import { encolarCorreo, generarMessageId } from "./correo.service.js";
 import { registrarEventoTicket } from "./evento.service.js";
 import { enTransaccion } from "./folio.service.js";
 import { ahoraDb, type UsuarioActor } from "./ot.common.js";
@@ -25,6 +26,11 @@ export interface CrearMensajeInput {
 // (ver punto 4 del encargo de la Fase 3, documentado también en backend-diseno.md).
 export async function crearMensaje(actor: UsuarioActor, ticketId: string, input: CrearMensajeInput) {
   const mensajeId = randomUUID();
+  // Fase 5: una respuesta_cliente encola el correo al solicitante (ver más abajo) y necesita su
+  // propio Message-ID; se genera antes del INSERT para guardarlo en el mismo mensaje_ticket
+  // (append-only: no se actualiza después) y reutilizarlo tal cual en el header del correo.
+  const messageId = input.tipo === "respuesta_cliente" ? generarMessageId() : null;
+
   await enTransaccion(AppDataSource, async (m) => {
     const ticket = await bloquearTicket(m, ticketId);
     exigir(puedePublicarMensaje(contextoTicket(ticket, actor)), "Solo el responsable actual, gestión o admin publican mensajes");
@@ -37,6 +43,7 @@ export async function crearMensaje(actor: UsuarioActor, ticketId: string, input:
         tipo: input.tipo as TipoMensajeTicket,
         autorId: actor.id,
         cuerpo: input.cuerpo,
+        messageId,
       }),
     );
 
@@ -68,9 +75,20 @@ export async function crearMensaje(actor: UsuarioActor, ticketId: string, input:
         cambio = true;
       }
       // Si estaba esperando_cliente, resuelto o cerrado, una respuesta_cliente del equipo NO
-      // reabre nada (reabrir es cosa de una respuesta DEL CLIENTE, que no existe en esta fase):
+      // reabre nada (reabrir es cosa de una respuesta DEL CLIENTE, ver services/portal.mensaje.service.ts):
       // se agrega al hilo sin tocar el estado.
       if (cambio) await m.save(Ticket, ticket);
+
+      // Fase 5, outbox transaccional: se encola en la MISMA transacción que crea el mensaje (nunca
+      // se envía de forma síncrona en el request; jobs/correoSalienteJob.ts lo despacha después).
+      await encolarCorreo(m, {
+        numero: ticket.numero,
+        para: ticket.solicitanteEmail,
+        plantilla: "respuesta_cliente",
+        datos: { numero: ticket.numero, asunto: ticket.asunto, cuerpo: input.cuerpo },
+        messageId: messageId!,
+        mensajeTicketId: mensajeId,
+      });
     }
 
     await registrarEventoTicket(m, ticketId, actor.id, { tipo: input.tipo, mensajeId });

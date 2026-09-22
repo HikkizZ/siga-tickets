@@ -17,6 +17,14 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     throw new AppError(401, "INVALID_TOKEN", "Token inválido o expirado");
   }
 
+  // Defensa en profundidad (Fase 5): un JWT de portal (scope:'portal', ver auth/portalToken.ts) se
+  // firma con el mismo secreto, así que jwt.verify lo aceptaría igual. Se rechaza explícitamente
+  // aquí en vez de confiar en que payload.sub venga vacío (más claro, y no depende de que ningún
+  // usuario futuro tenga un id que calce con el ticketId del token de portal).
+  if ((payload as unknown as { scope?: string }).scope === "portal") {
+    throw new AppError(401, "INVALID_TOKEN", "Token inválido o expirado");
+  }
+
   // Se consulta la BD en cada petición (son ~8 usuarios): con la renovación deslizante de
   // abajo, un usuario desactivado seguiría renovando su token para siempre, y un cambio
   // de rol no tendría efecto hasta que el token expirara.

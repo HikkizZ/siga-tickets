@@ -108,6 +108,9 @@ export const eventoTicketSchema = z.discriminatedUnion("tipo", [
   z.object({ tipo: z.literal("derivado"), de: id.nullable(), a: id, motivo: z.string().min(1) }).strict(),
   z.object({ tipo: z.literal("respuesta_cliente"), mensajeId: id }).strict(),
   z.object({ tipo: z.literal("nota_interna"), mensajeId: id }).strict(),
+  // Fase 5: mensaje del cliente desde el portal público (tipo='cliente' en mensaje_ticket, sin
+  // equivalente interno: 'respuesta_cliente'/'nota_interna' los crea el panel, este solo el portal).
+  z.object({ tipo: z.literal("mensaje_cliente"), mensajeId: id }).strict(),
   z.object({ tipo: z.literal("adjunto_agregado"), adjuntoId: id, mime: z.string(), tamanoBytes: z.number().int() }).strict(),
   // esOrigen distingue el vínculo creado por convertir-a-ot (true) de uno manual con una OT
   // existente vía POST /tickets/:id/ots (false).

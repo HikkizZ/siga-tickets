@@ -1,7 +1,8 @@
 import { IsNull } from "typeorm";
 import { AppDataSource } from "../config/dataSource.js";
 import { Notificacion } from "../entities/Notificacion.js";
-import type { EntidadAsignable } from "../entities/enums.js";
+import { Usuario } from "../entities/Usuario.js";
+import { Rol, type EntidadAsignable } from "../entities/enums.js";
 import { AppError } from "../errors/AppError.js";
 import { ahoraDb } from "./ot.common.js";
 import { enTransaccion, type ManagerTransaccional } from "./folio.service.js";
@@ -48,6 +49,28 @@ export async function notificarSla(
     titulo: vencida ? `${numero} venció su SLA` : `${numero} está por vencer su SLA`,
     cuerpo: vencida ? `El plazo de ${numero} se cumplió.` : `El plazo de ${numero} está por cumplirse.`,
   });
+}
+
+// Aviso in-app a TODOS los admin activos cuando un correo saliente agota sus reintentos (Fase 5,
+// jobs/correoSalienteJob.ts). Mismo patrón que notificarSla: se llama dentro de la MISMA
+// transacción que marca el correo 'fallido'.
+export async function notificarCorreoFallido(
+  manager: ManagerTransaccional,
+  correoId: string,
+  para: string,
+  asunto: string,
+): Promise<void> {
+  const admins = await manager.find(Usuario, { where: { rol: Rol.ADMIN, activo: true } });
+  for (const admin of admins) {
+    await manager.insert(Notificacion, {
+      usuarioId: admin.id,
+      tipo: "correo_fallido",
+      entidadTipo: "correo_saliente",
+      entidadId: correoId,
+      titulo: `No se pudo enviar un correo a ${para}`,
+      cuerpo: `El correo "${asunto}" agotó sus reintentos y quedó en estado fallido.`,
+    });
+  }
 }
 
 export async function listarNotificaciones(

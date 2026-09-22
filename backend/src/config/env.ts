@@ -20,6 +20,16 @@ const esquema = z
     JWT_EXPIRES_IN: z.string().default("2h"),
     ADJUNTOS_DIR: z.string().min(1).default("./storage/adjuntos"),
     LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
+    // Fase 5 (portal público + correo saliente): "turnstile"/"hcaptcha" son huecos para el futuro,
+    // sin credenciales todavía (no se implementan de verdad); "smtp" idem, requiere SMTP_*.
+    CAPTCHA_PROVIDER: z.enum(["noop", "turnstile", "hcaptcha"]).default("noop"),
+    MAIL_PROVIDER: z.enum(["consola", "smtp"]).default("consola"),
+    SOPORTE_EMAIL: z.string().email().default("soporte@sigaltda.cl"),
+    MAIL_DOMINIO: z.string().min(1).default("siga-ot.local"),
+    SMTP_HOST: z.string().optional(),
+    SMTP_PORT: z.coerce.number().int().positive().optional(),
+    SMTP_USER: z.string().optional(),
+    SMTP_PASS: z.string().optional(),
   })
   .refine((e) => !(e.NODE_ENV === "production" && e.JWT_SECRET.startsWith("cambia-esto")), {
     message: "JWT_SECRET sigue con el valor de ejemplo",
@@ -51,4 +61,14 @@ export const env = {
     trustServerCertificate: e.DB_TRUST_SERVER_CERTIFICATE,
   },
   jwt: { secret: e.JWT_SECRET, expiresIn: e.JWT_EXPIRES_IN },
+  captcha: { provider: e.CAPTCHA_PROVIDER },
+  mail: {
+    provider: e.MAIL_PROVIDER,
+    soporteEmail: e.SOPORTE_EMAIL,
+    dominio: e.MAIL_DOMINIO,
+    smtpHost: e.SMTP_HOST,
+    smtpPort: e.SMTP_PORT,
+    smtpUser: e.SMTP_USER,
+    smtpPass: e.SMTP_PASS,
+  },
 };

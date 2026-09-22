@@ -4,6 +4,7 @@ import { Usuario } from "../entities/Usuario.js";
 import { Rol } from "../entities/enums.js";
 import { hashPassword } from "../auth/password.js";
 import { signToken } from "../auth/jwt.js";
+import { _resetCacheUsuarioSistemaParaTests } from "../services/usuarioSistema.service.js";
 
 // Tablas con semilla de la migración: no se vacían (folio_counter se restablece aparte).
 const CON_SEMILLA = ["folio_counter", "sla_config", "calendario_laboral", "migrations"];
@@ -47,6 +48,10 @@ export async function limpiarBD(): Promise<void> {
   for (const tabla of ORDEN_LIMPIEZA) {
     await AppDataSource.query(tabla === "evento" ? `TRUNCATE TABLE [evento]` : `DELETE FROM [${tabla}]`);
   }
+  // usuario se acaba de vaciar: el id de 'sistema' que services/usuarioSistema.service.ts cachea
+  // en memoria (pensado para un proceso de producción donde esa fila nunca cambia) quedaría
+  // apuntando a una fila borrada. Se invalida aquí, el único lugar que la borra.
+  _resetCacheUsuarioSistemaParaTests();
   await AppDataSource.query(
     "UPDATE folio_counter SET ultimo = CASE serie WHEN 'TK' THEN 0 WHEN 'OT' THEN 1040 WHEN 'COT' THEN 2040 END",
   );
@@ -90,4 +95,12 @@ export async function crearSesion(rol: Rol): Promise<{ usuario: Usuario; auth: s
   const { usuario } = await crearUsuarioTest(rol);
   const token = signToken({ sub: usuario.id, username: usuario.username, rol: usuario.rol });
   return { usuario, auth: `Bearer ${token}` };
+}
+
+// El usuario 'sistema' lo siembra scripts/seed.ts (Fase 0) en un entorno real; la suite de tests
+// nunca lo corre (globalSetup.ts solo migra), así que cada test que ejercite el portal público
+// debe crearlo primero (igual que usuario.routes.test.ts ya hace para sus propios casos).
+export async function crearUsuarioSistemaTest(): Promise<Usuario> {
+  const { usuario } = await crearUsuarioTest(Rol.LECTURA, { username: "sistema", activo: false });
+  return usuario;
 }

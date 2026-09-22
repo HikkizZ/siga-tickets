@@ -1,6 +1,6 @@
-# siga-ot — Contrato de la API (Fases 0 a 4)
+# siga-ot — Contrato de la API (Fases 0 a 5)
 
-Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos), Fase 2 (cotizaciones), Fase 3 (tickets: hilo, tomar/derivar, conversión a OT) y Fase 4 (SLA en horas hábiles + notificaciones) implementadas.
+Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos), Fase 2 (cotizaciones), Fase 3 (tickets: hilo, tomar/derivar, conversión a OT), Fase 4 (SLA en horas hábiles + notificaciones) y Fase 5 (portal público + correo saliente) implementadas.
 
 ## Convenciones
 
@@ -536,3 +536,97 @@ El evento `creado` de una **OT** nacida de una conversión (Fase 3) extiende el 
 ## Otros
 
 - `GET /health` (sin JWT) → `{ status: "ok", data: { db: "ok" } }`; `503 DB_UNAVAILABLE` si la base no responde.
+
+---
+
+## Pública (Fase 5)
+
+Base: `/publico` (sin prefijo `/api/v1`, sin JWT interno). Mismo envelope `{status, data}` que el resto de la API. Dos grupos:
+
+- **Sin autenticación** (`POST /publico/tickets`, `POST /publico/tickets/seguimiento`): exigen `captchaToken` (ver "Captcha" abajo) y están detrás de un rate limiter.
+- **Con token de portal** (el resto): exigen `Authorization: Bearer <token de portal>`, un JWT propio con `{ scope: "portal", ticketId }`, TTL **15 minutos**, emitido por `POST /publico/tickets/seguimiento`. `authenticate` (interno) rechaza explícitamente cualquier token con `scope: "portal"`; `authenticatePortal` rechaza cualquier token que no lo tenga. Ninguno de los dos endpoints revela si el fallo fue por token ajeno o expirado (siempre `401 INVALID_TOKEN`).
+
+### Captcha
+
+`NoopCaptcha` (por defecto, `CAPTCHA_PROVIDER=noop`) aprueba cualquier `captchaToken` **no vacío**: hoy el portal no está protegido de verdad contra bots, solo el flujo ya queda cableado. `captchaToken` vacío o ausente → `400 VALIDATION_ERROR`. Un proveedor real (Turnstile/hCaptcha) devolvería `400 CAPTCHA_INVALIDO` cuando el token es inválido; con `NoopCaptcha` ese código nunca ocurre en la práctica.
+
+### POST /publico/tickets — crear ticket desde el portal
+
+`multipart/form-data`. Campos de texto:
+
+```
+nombre, correo, empresa? (→ solicitanteEmpresa), asunto, descripcion, prioridad? (default "media"), captchaToken
+```
+
+Y archivos opcionales en el campo **`adjuntos`** (varios, mismas reglas de MIME/extensión/tamaño que `POST /adjuntos`, ver arriba). `canal` es siempre `'portal'` (no viene del body). `recepcionadoPor` = el usuario técnico `sistema`. Nace `estado: 'nuevo'`, sin responsable. Folio `TK-xxxx`; SLA calculado igual que la creación interna.
+
+```
+curl -F nombre="Juan Pérez" -F correo="juan@cliente.cl" -F asunto="No enciende el equipo" \
+     -F descripcion="El PC de recepción no enciende" -F captchaToken=x \
+     -F "adjuntos=@foto.jpg;type=image/jpeg" \
+     https://.../publico/tickets
+```
+
+→ `201 { data: { numero: "TK-0001" } }` — **solo el número**, nunca el id interno ni el `token_publico`.
+
+Efectos en la misma transacción: se encolan dos correos en `correo_saliente` (outbox, los envía el worker, ver más abajo): `ticket_creado` al `correo` del solicitante, y `aviso_soporte` a `SOPORTE_EMAIL` (con `Auto-Submitted: auto-generated`, para no generar un bucle si algún día se lee ese buzón — Fase 6).
+
+Errores: `400 VALIDATION_ERROR` (campo faltante/inválido, incluido `captchaToken` vacío); `415/413/400 ADJUNTO_*` (mismos códigos que `POST /adjuntos`); `429 RATE_LIMITED` (5/hora por IP).
+
+### POST /publico/tickets/seguimiento — obtener un token de portal
+
+Body `{ "numero": "TK-0001", "email": "juan@cliente.cl", "captchaToken": "..." }`. Busca el ticket por `numero` **y** que `solicitanteEmail` coincida (colación insensible a mayúsculas de la BD, sin `LOWER()`).
+
+- Coincide → `200 { data: { token } }` (JWT de portal, `scope:"portal"`, 15 min).
+- No coincide (número inexistente, **o** existente con otro correo) → **exactamente la misma respuesta** en ambos casos, con un retardo fijo de ~200 ms antes de responder: `401 { status:"error", code:"SEGUIMIENTO_INVALIDO", message:"No pudimos validar esos datos" }`. Nunca revela cuál de las dos causas fue.
+
+Errores: `400 VALIDATION_ERROR`; `429 RATE_LIMITED` (10/hora por IP **y**, por separado, 20/día por el `email` del body — el diseño exige ambos, no solo IP).
+
+### GET /publico/ticket — con token de portal
+
+DTO reducido, construido campo a campo (`toPortalTicket`/`toPortalOt`, nunca spread de la entidad ni el DTO interno):
+
+```json
+{ "numero": "TK-0001", "asunto": "…", "descripcion": "…", "estado": "abierto",
+  "fechaIngreso": "…",
+  "mensajes": [{ "id": "…", "tipo": "cliente", "cuerpo": "…", "creadoEn": "…" }],
+  "ot": { "estado": "en_ejecucion", "fechaEstimadaTermino": "2026-10-01", "responsableNombre": "…" } }
+```
+
+- `mensajes`: el hilo del ticket **excluyendo `nota_interna`** (filtro en el `WHERE`, no en memoria); incluye `tipo: "cliente"` (mensajes del propio solicitante) y `"respuesta_cliente"` (respuestas del staff), en orden cronológico.
+- `ot`: `null` si el ticket no tiene ninguna OT vinculada; si tiene una o más, la de origen primero (o la más antigua si ninguna es de origen) — **nunca** horas, montos, cotizaciones ni otros datos internos.
+
+### POST /publico/ticket/mensajes — responder como cliente
+
+`multipart/form-data`: `cuerpo` (texto) + archivos opcionales en `adjuntos` (mismas reglas; quedan sueltos al ticket, `entidadTipo='ticket'`, sin re-parentarse a este mensaje). Crea un `mensaje_ticket` con `tipo:'cliente'`, `autorId: null`, `autorExterno` = el correo del ticket.
+
+- Si el ticket estaba `esperando_cliente` o `resuelto`: se reabre a `abierto`; si estaba `esperando_cliente`, además cierra la pausa de SLA activa y corre los vencimientos por lo que duró.
+- Si estaba `cerrado`: **no se reabre** (decisión del staff).
+
+→ `201 { data: { id, cuerpo, creadoEn } }`. Errores: `400 VALIDATION_ERROR` (cuerpo vacío); `415/413/400 ADJUNTO_*`; `429 RATE_LIMITED` (30/hora por IP).
+
+### POST /publico/adjuntos — adjuntar evidencia después
+
+`multipart/form-data`, un solo archivo en el campo **`archivo`** (mismo campo que el endpoint interno). Sube al ticket del token (`entidadTipo='ticket'`), fuera del flujo de creación o de un mensaje puntual.
+
+→ `201 { data: { id } }`. Errores: `415/413/400 ADJUNTO_*`; `429 RATE_LIMITED` (30/hora por IP).
+
+### GET /publico/adjuntos/:id/descargar — con token de portal
+
+Mismas cabeceras de seguridad que `GET /adjuntos/:id/descargar`. Solo descarga si el adjunto pertenece al ticket del token: directamente (`entidadTipo='ticket'`) o a través de un mensaje de **ese mismo ticket** cuyo `tipo` sea `'cliente'` o `'respuesta_cliente'` — **nunca** `'nota_interna'`, ni un adjunto de otro ticket u otra OT. Si no cumple: **404** (no 403, mismo principio de privacidad que las notificaciones de la Fase 4 — nunca revela que el recurso existe).
+
+---
+
+## Correo saliente (Fase 5)
+
+Outbox transaccional (`correo_saliente`): se inserta en la MISMA transacción del hecho que lo origina, nunca se envía de forma síncrona en el request. Dos orígenes hoy:
+
+1. `POST /publico/tickets` → `ticket_creado` (al solicitante) + `aviso_soporte` (a `SOPORTE_EMAIL`).
+2. `POST /tickets/:id/mensajes` con `tipo:'respuesta_cliente'` (panel interno) → `respuesta_cliente` (al `solicitanteEmail` del ticket); el `Message-ID` generado se guarda también en `mensaje_ticket.messageId` de ese mensaje (para que la Fase 6 pueda enganchar `In-Reply-To`).
+
+Cada correo lleva `Message-ID` propio (`<uuid@MAIL_DOMINIO>`), `X-SIGA-Ticket: <numero>` y `References` encadenado al `Message-ID` anterior del mismo ticket (si hubo alguno).
+
+Un worker (`api/worker.ts`, cron cada 30 s) toma filas `pendiente` vencidas (`WITH (UPDLOCK, READPAST, ROWLOCK)`), llama al `Mailer` configurado (`MAIL_PROVIDER`: `consola` por defecto, registra en el log; o `smtp`, con `nodemailer`) y:
+
+- Éxito → `estado='enviado'`.
+- Falla → `intentos += 1`; si llega a 5, `estado='fallido'` + notificación in-app a todos los `admin`; si no, vuelve a `pendiente` con `proximoIntentoEn = ahora + 2^intentos minutos`.

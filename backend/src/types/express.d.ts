@@ -12,6 +12,10 @@ declare global {
         rol: Rol;
       };
       validated?: { body?: unknown; params?: unknown; query?: unknown };
+      // Fase 5: lo deja authenticatePortal (JWT de portal, scope:'portal') en vez de `user`.
+      portal?: {
+        ticketId: string;
+      };
     }
   }
 }
