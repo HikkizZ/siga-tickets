@@ -18,6 +18,33 @@ const opcionalTexto = (max: number) => z.string().trim().min(1).max(max);
 
 const paramsId = z.object({ id: uuid() });
 
+// Espejo del CHECK ot_interna_check (interna ⇒ área sin cliente; no interna ⇒ cliente sin área).
+// Factorizado (Fase 3) para que POST /tickets/:id/convertir-a-ot lo reutilice tal cual en vez de
+// copiarlo a mano: ahí los valores efectivos de esInterna/clienteId/areaInterna se resuelven en
+// el servicio (pueden heredarse del ticket), no directamente del body, así que no puede vivir
+// dentro de un superRefine de Zod atado a ese body.
+export interface ConsistenciaInterna {
+  esInterna: boolean;
+  clienteId?: string | null | undefined;
+  areaInterna?: string | null | undefined;
+}
+export interface ProblemaConsistenciaInterna {
+  campo: "areaInterna" | "clienteId";
+  mensaje: string;
+}
+
+export function problemasConsistenciaInterna(v: ConsistenciaInterna): ProblemaConsistenciaInterna[] {
+  const problemas: ProblemaConsistenciaInterna[] = [];
+  if (v.esInterna) {
+    if (!v.areaInterna) problemas.push({ campo: "areaInterna", mensaje: "Una OT interna requiere areaInterna" });
+    if (v.clienteId) problemas.push({ campo: "clienteId", mensaje: "Una OT interna no puede tener clienteId" });
+  } else {
+    if (!v.clienteId) problemas.push({ campo: "clienteId", mensaje: "Una OT no interna requiere clienteId" });
+    if (v.areaInterna) problemas.push({ campo: "areaInterna", mensaje: "areaInterna solo aplica a OT internas" });
+  }
+  return problemas;
+}
+
 export const crearOtReq = {
   body: z
     .object({
@@ -40,13 +67,7 @@ export const crearOtReq = {
     .strict()
     // Refleja el CHECK ot_interna_check para responder 400 claro y no un 500 por violación de CHECK.
     .superRefine((b, ctx) => {
-      if (b.esInterna) {
-        if (!b.areaInterna) ctx.addIssue({ code: "custom", path: ["areaInterna"], message: "Una OT interna requiere areaInterna" });
-        if (b.clienteId) ctx.addIssue({ code: "custom", path: ["clienteId"], message: "Una OT interna no puede tener clienteId" });
-      } else {
-        if (!b.clienteId) ctx.addIssue({ code: "custom", path: ["clienteId"], message: "Una OT no interna requiere clienteId" });
-        if (b.areaInterna) ctx.addIssue({ code: "custom", path: ["areaInterna"], message: "areaInterna solo aplica a OT internas" });
-      }
+      for (const p of problemasConsistenciaInterna(b)) ctx.addIssue({ code: "custom", path: [p.campo], message: p.mensaje });
     }),
 };
 

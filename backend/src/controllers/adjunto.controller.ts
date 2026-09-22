@@ -8,7 +8,7 @@ import { abrirAdjunto, subirAdjunto } from "../services/adjunto.service.js";
 export async function subirAdjuntoController(req: Request, res: Response): Promise<void> {
   const { body } = validado(req, subirAdjuntoReq);
   if (!req.file) throw new AppError(400, "ADJUNTO_INVALIDO", "Falta el archivo (campo 'archivo')");
-  const data = await subirAdjunto({ id: req.user!.id, rol: req.user!.rol }, body.entidadId, req.file);
+  const data = await subirAdjunto({ id: req.user!.id, rol: req.user!.rol }, body.entidadTipo, body.entidadId, req.file);
   res.status(201).json({ status: "ok", data });
 }
 

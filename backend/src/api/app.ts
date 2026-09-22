@@ -12,6 +12,7 @@ import { authRouter } from "../routes/auth.routes.js";
 import { clienteRouter } from "../routes/cliente.routes.js";
 import { cotizacionRouter } from "../routes/cotizacion.routes.js";
 import { otRouter } from "../routes/ot.routes.js";
+import { ticketRouter } from "../routes/ticket.routes.js";
 import { usuarioRouter } from "../routes/usuario.routes.js";
 
 export const app = express();
@@ -34,6 +35,7 @@ app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/usuarios", usuarioRouter);
 app.use("/api/v1/clientes", clienteRouter);
 app.use("/api/v1/ots", otRouter);
+app.use("/api/v1/tickets", ticketRouter);
 app.use("/api/v1/cotizaciones", cotizacionRouter);
 app.use("/api/v1/adjuntos", adjuntoRouter);
 

@@ -8,7 +8,19 @@ const estado = z.string().min(1).max(20);
 // Payload por tipo de evento de OT. Guarda ids y valores de negocio, no copias de datos personales.
 // `.strict()`: un campo de más es un bug del servicio y debe fallar antes de escribir.
 export const eventoOtSchema = z.discriminatedUnion("tipo", [
-  z.object({ tipo: z.literal("creado"), numero: z.string(), responsableId: id, clienteId: id.nullable(), esInterna: z.boolean() }).strict(),
+  // origenTicketId/origenTicketNumero (Fase 3): solo presentes cuando la OT nace de
+  // POST /tickets/:id/convertir-a-ot, para poder componer "creada desde TK-000X por [actor]".
+  z
+    .object({
+      tipo: z.literal("creado"),
+      numero: z.string(),
+      responsableId: id,
+      clienteId: id.nullable(),
+      esInterna: z.boolean(),
+      origenTicketId: id.optional(),
+      origenTicketNumero: z.string().optional(),
+    })
+    .strict(),
   z.object({ tipo: z.literal("estado_cambiado"), de: estado, a: estado }).strict(),
   z.object({ tipo: z.literal("prioridad_cambiada"), de: estado, a: estado }).strict(),
   z.object({ tipo: z.literal("derivado"), de: id.nullable(), a: id, motivo: z.string().min(1), mantuvoComoColaborador: z.boolean() }).strict(),
@@ -82,4 +94,35 @@ export async function registrarEventoCotizacion(
 ): Promise<void> {
   const { tipo, ...payload } = eventoCotizacionSchema.parse(evento);
   await insertarEvento(manager, EntidadEvento.COTIZACION, cotizacionId, actorId, tipo, payload);
+}
+
+// Payload por tipo de evento de ticket (Fase 3). Sin mantuvoComoColaborador (el ticket no tiene
+// colaboradores, ver ticket.policy.ts); con un tipo 'tomado' que OT no tiene (un ticket nace sin
+// responsable, ver decisión 0.4 del diseño).
+export const eventoTicketSchema = z.discriminatedUnion("tipo", [
+  z.object({ tipo: z.literal("creado"), numero: z.string(), canal: z.string(), recepcionadoPorId: id, clienteId: id.nullable() }).strict(),
+  z.object({ tipo: z.literal("estado_cambiado"), de: estado, a: estado }).strict(),
+  z.object({ tipo: z.literal("prioridad_cambiada"), de: estado, a: estado }).strict(),
+  z.object({ tipo: z.literal("ticket_editado"), campos: z.array(z.string()).min(1) }).strict(),
+  z.object({ tipo: z.literal("tomado"), usuarioId: id }).strict(),
+  z.object({ tipo: z.literal("derivado"), de: id.nullable(), a: id, motivo: z.string().min(1) }).strict(),
+  z.object({ tipo: z.literal("respuesta_cliente"), mensajeId: id }).strict(),
+  z.object({ tipo: z.literal("nota_interna"), mensajeId: id }).strict(),
+  z.object({ tipo: z.literal("adjunto_agregado"), adjuntoId: id, mime: z.string(), tamanoBytes: z.number().int() }).strict(),
+  // esOrigen distingue el vínculo creado por convertir-a-ot (true) de uno manual con una OT
+  // existente vía POST /tickets/:id/ots (false).
+  z.object({ tipo: z.literal("vinculado_ot"), otId: id, otNumero: z.string(), esOrigen: z.boolean() }).strict(),
+  z.object({ tipo: z.literal("ot_desvinculada"), otId: id, otNumero: z.string() }).strict(),
+]);
+
+export type EventoTicket = z.input<typeof eventoTicketSchema>;
+
+export async function registrarEventoTicket(
+  manager: ManagerTransaccional,
+  ticketId: string,
+  actorId: string,
+  evento: EventoTicket,
+): Promise<void> {
+  const { tipo, ...payload } = eventoTicketSchema.parse(evento);
+  await insertarEvento(manager, EntidadEvento.TICKET, ticketId, actorId, tipo, payload);
 }

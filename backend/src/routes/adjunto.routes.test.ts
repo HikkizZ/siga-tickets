@@ -167,7 +167,10 @@ describe("POST /adjuntos", () => {
   it("validaciones del multipart", async () => {
     const e = await crearEscenario();
     const sinArchivo = await request(app).post(`${API}/adjuntos`).set("Authorization", e.admin.auth).field("entidadTipo", "ot").field("entidadId", e.otId);
-    const ticket = await subir(e.admin.auth, e.otId, pdf(), { entidadTipo: "ticket" });
+    // Desde la Fase 3, entidadTipo=ticket es válido a nivel de esquema (ver adjunto.validation.ts);
+    // e.otId no es un ticket real, así que ahora falla en el servicio (404), no en Zod (400).
+    const tipoInvalido = await subir(e.admin.auth, e.otId, pdf(), { entidadTipo: "no-existe" });
+    const ticketInexistente = await subir(e.admin.auth, e.otId, pdf(), { entidadTipo: "ticket" });
     const idMalo = await subir(e.admin.auth, "no-uuid", pdf());
     const inexistente = await subir(e.admin.auth, "11111111-1111-4111-8111-111111111111", pdf());
     const campoIncorrecto = await request(app)
@@ -180,7 +183,9 @@ describe("POST /adjuntos", () => {
     const json = await request(app).post(`${API}/adjuntos`).set("Authorization", e.admin.auth).send({ entidadTipo: "ot", entidadId: e.otId });
 
     expect(sinArchivo.status).toBe(400);
-    expect(ticket.status).toBe(400);
+    expect(tipoInvalido.status).toBe(400);
+    expect(ticketInexistente.status).toBe(404);
+    expect(ticketInexistente.body.code).toBe("TICKET_NO_ENCONTRADO");
     expect(idMalo.status).toBe(400);
     expect(inexistente.status).toBe(404);
     expect(inexistente.body.code).toBe("OT_NO_ENCONTRADA");

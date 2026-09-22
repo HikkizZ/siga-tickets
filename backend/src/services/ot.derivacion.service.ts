@@ -1,14 +1,14 @@
-import { randomUUID } from "node:crypto";
 import { AppDataSource } from "../config/dataSource.js";
-import { Notificacion } from "../entities/Notificacion.js";
 import { Ot } from "../entities/Ot.js";
 import { OtColaborador } from "../entities/OtColaborador.js";
+import { EntidadAsignable } from "../entities/enums.js";
 import { AppError } from "../errors/AppError.js";
 import { conflictoConcurrencia } from "../errors/dbErrors.js";
 import { exigir, puedeDerivar } from "../policies/ot.policy.js";
+import { moverTramoResponsable, notificarDerivacion } from "./asignacion.service.js";
 import { registrarEventoOt } from "./evento.service.js";
 import { enTransaccion } from "./folio.service.js";
-import { ahoraDb, bloquearOt, contextoOt, otNoEncontrada, usuarioAsignable, type UsuarioActor } from "./ot.common.js";
+import { bloquearOt, contextoOt, otNoEncontrada, usuarioAsignable, type UsuarioActor } from "./ot.common.js";
 import { obtenerDetalleOt } from "./ot.service.js";
 
 export interface DerivarInput {
@@ -38,24 +38,15 @@ export async function derivarOt(actor: UsuarioActor, id: string, input: DerivarI
       }
       await usuarioAsignable(m, input.destinoId, "DERIVACION_INVALIDA", "El destino");
 
-      // hasta > desde es un CHECK: si la derivación cae en el mismo milisegundo que el inicio del tramo, se avanza 1 ms.
-      const [abierto] = (await m.query(
-        `SELECT id, desde FROM asignacion WHERE entidad_tipo = 'ot' AND entidad_id = @0 AND hasta IS NULL`,
-        [id],
-      )) as Array<{ id: string; desde: Date }>;
-      let ahora = await ahoraDb(m);
-      if (abierto && ahora.getTime() <= abierto.desde.getTime()) ahora = new Date(abierto.desde.getTime() + 1);
-      const ahoraIso = ahora.toISOString();
-
-      // Cerrar y abrir con el mismo instante: los tramos son [desde, hasta) y no se solapan.
-      if (abierto) {
-        await m.query(`UPDATE asignacion SET hasta = CAST(@0 AS datetimeoffset(3)) WHERE id = @1`, [ahoraIso, abierto.id]);
-      }
-      await m.query(
-        `INSERT INTO asignacion (id, entidad_tipo, entidad_id, usuario_id, desde, motivo_entrada, derivado_por_id)
-         VALUES (@0, 'ot', @1, @2, CAST(@3 AS datetimeoffset(3)), @4, @5)`,
-        [randomUUID(), id, input.destinoId, ahoraIso, input.motivo, actor.id],
-      );
+      // Mecánica de tramos generalizada (Fase 3, asignacion.service.ts): cerrar y abrir con el
+      // mismo instante, los tramos son [desde, hasta) y no se solapan.
+      await moverTramoResponsable(m, {
+        entidadTipo: EntidadAsignable.OT,
+        entidadId: id,
+        destinoId: input.destinoId,
+        motivoEntrada: input.motivo,
+        derivadoPorId: actor.id,
+      });
 
       const anteriorId = ot.responsableActualId;
       // Colaborador ≠ responsable: si el destino colaboraba, deja de hacerlo.
@@ -73,15 +64,7 @@ export async function derivarOt(actor: UsuarioActor, id: string, input: DerivarI
         motivo: input.motivo,
         mantuvoComoColaborador: mantener,
       });
-      // El API de notificaciones llega en la fase 4; aquí solo se registra.
-      await m.insert(Notificacion, {
-        usuarioId: input.destinoId,
-        tipo: "derivacion",
-        entidadTipo: "ot",
-        entidadId: id,
-        titulo: `${ot.numero} fue derivada a ti`,
-        cuerpo: input.motivo,
-      });
+      await notificarDerivacion(m, input.destinoId, EntidadAsignable.OT, id, `${ot.numero} fue derivada a ti`, input.motivo);
     });
   } catch (err) {
     throw conflictoConcurrencia(err) ?? err;

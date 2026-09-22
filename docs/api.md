@@ -1,6 +1,6 @@
-# siga-ot — Contrato de la API (Fases 0, 1 y 2)
+# siga-ot — Contrato de la API (Fases 0 a 3)
 
-Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos) y Fase 2 (cotizaciones) implementadas.
+Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos), Fase 2 (cotizaciones) y Fase 3 (tickets: hilo, tomar/derivar, conversión a OT) implementadas.
 
 ## Convenciones
 
@@ -20,13 +20,15 @@ Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad
 | 401 | `UNAUTHENTICATED` / `INVALID_TOKEN` | Sin token, token inválido o usuario desactivado |
 | 403 | `FORBIDDEN` | Rol insuficiente (filtro grueso) |
 | 403 | `PERMISO_DENEGADO` | Rol suficiente pero sin relación con la OT (permiso por fila) |
-| 404 | `OT_NO_ENCONTRADA`, `NOT_FOUND` | Recurso inexistente |
-| 409 | `CONFLICTO_CONCURRENCIA` | Otra operación ganó una carrera (derivación simultánea); reintenta |
+| 404 | `OT_NO_ENCONTRADA`, `TICKET_NO_ENCONTRADO`, `MENSAJE_NO_ENCONTRADO`, `TICKET_OT_NO_ENCONTRADO`, `NOT_FOUND` | Recurso inexistente |
+| 409 | `CONFLICTO_CONCURRENCIA` | Otra operación ganó una carrera (derivación/toma simultánea); reintenta |
+| 409 | `TICKET_YA_ASIGNADO` | `POST /tickets/:id/tomar` sobre un ticket que ya tiene responsable |
+| 409 | `TICKET_OT_YA_VINCULADO` | `POST /tickets/:id/ots` con un par ticket/OT ya vinculado |
 | 500 | `INTERNAL_ERROR` | Error no controlado (nunca trae detalle) |
 
-### Permisos por fila (OT)
+### Permisos por fila (OT y tickets)
 
-`admin`/`gestion`: sin restricción. `tecnico`:
+`admin`/`gestion`: sin restricción. `tecnico` en **OT**:
 
 | Acción | Condición |
 |---|---|
@@ -35,7 +37,16 @@ Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad
 | Etapas; añadir/quitar colaboradores | solo el responsable actual (además, cualquier `tecnico` puede añadirse a sí mismo como colaborador) |
 | Horas | registrar: solo las propias y solo si eres responsable o colaborador de la OT; borrar: solo las propias (sin exigir relación con la OT) |
 
-`lectura` solo lee y descarga.
+`tecnico` en **tickets** (Fase 3) — **sin colaborador**: el esquema no tiene una tabla `ticket_colaborador` (a diferencia de `ot_colaborador`). Donde el diseño hablaba de "responsable o colaborador" para un ticket, en la práctica es solo "responsable actual":
+
+| Acción | Condición |
+|---|---|
+| Editar, cambiar estado, publicar mensajes (nota interna o respuesta), adjuntar | solo el responsable actual |
+| Derivar | solo el responsable actual |
+| Tomar (`POST /tickets/:id/tomar`) | cualquier `tecnico`, solo si el ticket no tiene responsable |
+| Convertir a OT, vincular/desvincular OT | nunca — solo `gestion`/`admin`, sin excepción por fila |
+
+`lectura` solo lee y descarga en ambos casos.
 
 ---
 
@@ -153,10 +164,11 @@ Mismos filtros que el listado (sin paginación ni orden). Devuelve siempre las 6
   "cotizaciones": [{
     "id": "…", "numero": "COT-2042", "montoClp": 500000, "estado": "enviada",
     "version": 2, "esPrincipal": true, "fecha": "2026-09-21" }],
-  "tickets": [] }
+  "tickets": [{ "id": "…", "numero": "TK-0001", "asunto": "No enciende el equipo", "estado": "abierto", "canal": "telefono", "esOrigen": true }] }
 ```
 - `cadenaResponsables`: orden cronológico; el tramo abierto lleva `actual: true`, `hasta: null` y `duracionSeg` = lo transcurrido hasta ahora; el primero tiene `motivoEntrada` y `derivadoPor` en `null`.
-- `eventos`: más recientes primero (timeline). `tickets` se llenará en la fase 3.
+- `eventos`: más recientes primero (timeline).
+- `tickets` (Fase 3): tickets vinculados vía `ticket_ot` (conversión o vínculo manual), el de origen primero (`esOrigen: true`); `[]` si no hay ninguno.
 - `cotizaciones` (Fase 2): **todas** las cotizaciones de la OT (no solo la principal), ordenadas por `version` descendente. El detalle completo de cada una (cliente, timeline propio) está en `GET /cotizaciones/:id`.
 - `slaEstado`/`slaResolucionVenceEn`: la Fase 1 no los calcula (llegan en la Fase 4).
 
@@ -278,20 +290,154 @@ Body `{ "estado": "enviada" }`. Transiciones válidas: `borrador→enviada`, `en
 
 ---
 
+## Tickets (Fase 3)
+
+Panel interno únicamente (`/api/v1`, JWT). Fuera de alcance de esta fase: portal público, ingesta/envío de correo, cálculo real de SLA (los campos `sla_*` quedan con su default, igual que `ot` en la Fase 1), API de lectura de notificaciones (se insertan filas en `notificacion`, igual que la derivación de OT, pero no hay endpoint para leerlas todavía).
+
+**Sin colaborador**: a diferencia de OT, el esquema no tiene `ticket_colaborador`. Todo lo que en la matriz de la sección 6 del diseño dice "responsable o colaborador" para un ticket es, en la implementación, solo "responsable actual" (ver tabla de permisos por fila más arriba).
+
+`TicketResumen` (forma de `GET /tickets`): `{ id, numero, asunto, canal, prioridad, estado, cliente: {id,nombre}|null, solicitanteNombre, responsable: {id,nombre}|null, fechaIngreso, slaEstado }`.
+
+### GET /tickets — lista paginada · lectura
+
+Query: `page` (≥1, def. 1), `perPage` (1–100, def. 25), `orden` ∈ `numero | asunto | estado | prioridad | fechaIngreso | creadoEn | actualizadoEn` (def. `fechaIngreso`), `dir` = `asc|desc` (def. `desc`), y filtros `estado`, `prioridad`, `canal`, `responsable` (uuid), `mios=true` (soy el responsable actual), `sinAsignar=true` (`responsable_actual_id IS NULL`), `q` (busca en `numero`, `asunto`, `solicitanteNombre`; `%`, `_` y `[` literales, mismo escape que OT), `desde`/`hasta` (`YYYY-MM-DD`, sobre `fechaIngreso` en hora de Chile).
+
+```
+GET /api/v1/tickets?sinAsignar=true&prioridad=alta&orden=fechaIngreso&dir=asc
+```
+```json
+{ "status": "ok",
+  "data": [{ "id": "…", "numero": "TK-0001", "asunto": "No enciende el equipo", "canal": "telefono",
+    "prioridad": "media", "estado": "nuevo", "cliente": null, "solicitanteNombre": "Juan Pérez",
+    "responsable": null, "fechaIngreso": "…", "slaEstado": "en_plazo" }],
+  "meta": { "page": 1, "perPage": 25, "total": 1 } }
+```
+
+### POST /tickets · tecnico
+
+```json
+{ "asunto": "No enciende el equipo", "descripcion": "El PC de recepción no enciende",
+  "solicitanteNombre": "Juan Pérez", "solicitanteEmail": "juan@cliente.cl", "solicitanteTelefono": "+56...",
+  "solicitanteEmpresa": "…", "clienteId": "…", "canal": "telefono", "prioridad": "media" }
+```
+- `canal` ∈ `telefono|presencial|interno` **solamente** (`portal`/`correo` son de fases futuras: el portal público y la ingesta de correo crean tickets por otro camino) → si no, `400 VALIDATION_ERROR`.
+- `recepcionadoPorId` **no** se acepta: sale del token (`400` si se envía, `.strict()`).
+- `clienteId` opcional; si viene, debe ser un cliente existente y activo (`400 CLIENTE_INVALIDO`).
+- Nace **sin responsable** (`responsable: null`) y en estado `nuevo`: alguien lo debe tomar (`POST /tickets/:id/tomar`), incluido quien lo creó si quiere.
+- Folio `TK-xxxx` consecutivo sin huecos; evento `creado`.
+
+→ `201 { data: <Detalle> }`.
+
+### GET /tickets/:id · lectura
+
+`data` (**Detalle**):
+
+```json
+{ "id": "…", "numero": "TK-0001", "asunto": "…", "descripcion": "…",
+  "solicitanteNombre": "…", "solicitanteEmail": "…", "solicitanteTelefono": null, "solicitanteEmpresa": null,
+  "cliente": null, "canal": "telefono", "prioridad": "media", "estado": "abierto",
+  "fechaIngreso": "…", "recepcionadoPor": { "id": "…", "nombre": "…" },
+  "responsable": { "id": "…", "nombre": "…" },
+  "primeraRespuestaEn": "…|null", "resueltoEn": null, "cerradoEn": null,
+  "slaEstado": "en_plazo", "creadoEn": "…", "actualizadoEn": "…",
+  "cadenaResponsables": [{
+    "id": "…", "usuario": { "id": "…", "nombre": "…" },
+    "desde": "…", "hasta": "…|null", "duracionSeg": 120, "actual": true,
+    "motivoEntrada": "…|null", "derivadoPor": { "id": "…", "nombre": "…" }|null }],
+  "mensajes": [{
+    "id": "…", "tipo": "nota_interna", "autor": { "id": "…", "nombre": "…" }, "autorExterno": null,
+    "cuerpo": "…", "adjuntos": [], "creadoEn": "…" }],
+  "adjuntos": [{ "id": "…", "nombre": "foto.jpg", "mime": "image/jpeg", "tamanoBytes": 1234, "estado": "limpio", "subidoPor": {…}, "creadoEn": "…" }],
+  "ots": [{ "id": "…", "numero": "OT-1041", "titulo": "…", "estado": "ingresado", "esOrigen": true }],
+  "eventos": [{ "id": "5", "tipo": "tomado", "actor": {…}, "payload": { "usuarioId": "…" }, "ocurridoEn": "…" }] }
+```
+- `cadenaResponsables`: vacía si el ticket nunca se tomó (nace sin responsable, no abre tramo hasta el primer `tomar`/`derivar`). Mismo formato que OT.
+- `mensajes`: el hilo completo, en orden cronológico, **incluye notas internas** (esto es el panel interno, no el portal). Cada mensaje trae sus propios `adjuntos` (los re-parentados a él); `adjuntos` a nivel de ticket son los que aún no se asociaron a ningún mensaje ("sueltos").
+- `ots`: OT(s) vinculadas vía `ticket_ot`, la de origen primero.
+- `eventos`: más recientes primero (timeline); también expuesto en `GET /tickets/:id/eventos`.
+
+### PATCH /tickets/:id · tecnico (solo responsable actual)
+
+Body parcial: `asunto?, descripcion?, prioridad?`. Nunca `numero`, `estado`, `canal`, `recepcionadoPor`, `responsable` (`.strict()` los rechaza con `400`). Solo los campos que cambian generan evento (`prioridad_cambiada` para la prioridad, `ticket_editado` para el resto). → `200 Detalle`.
+
+### POST /tickets/:id/estado · tecnico (solo responsable actual)
+
+Único camino para cambiar el estado. Body `{ "estado": "resuelto" }`, cualquiera de `nuevo|abierto|esperando_cliente|resuelto|cerrado` distinto del actual (sin máquina de transiciones estricta todavía). Mismo estado → `409 ESTADO_SIN_CAMBIO`. `resueltoEn`/`cerradoEn` se fijan la primera vez que se llega a `resuelto`/`cerrado` y no se borran si el ticket se reabre manualmente. Evento `estado_cambiado`. → `200 Detalle`.
+
+### POST /tickets/:id/tomar · tecnico
+
+Sin body. Solo si el ticket no tiene responsable (`responsableActualId IS NULL`); si ya lo tiene → `409 TICKET_YA_ASIGNADO`. Cualquier `tecnico` (o gestion/admin) puede tomar un ticket libre, no hace falta ninguna relación previa. Abre el primer tramo de la cadena con `motivoEntrada: null` y `derivadoPor: null` (nadie se lo entregó). Evento `tomado`. Dos "tomar" simultáneos sobre el mismo ticket: gana exactamente uno, el otro `409`. → `200 Detalle`.
+
+### POST /tickets/:id/mensajes · tecnico (solo responsable actual)
+
+```json
+{ "tipo": "respuesta_cliente", "cuerpo": "Estamos revisando el equipo", "adjuntoIds": ["…"] }
+```
+- `tipo` ∈ `respuesta_cliente | nota_interna` **solamente**: `cliente` se rechaza por Zod (esos mensajes los crea el portal o la ingesta de correo, fases futuras).
+- `nota_interna`: nunca cambia el estado del ticket.
+- `respuesta_cliente`: si es la primera respuesta del equipo en la vida del ticket, fija `primeraRespuestaEn` (una sola vez) y, si el estado era `nuevo`, pasa a `abierto`. Si el ticket estaba `esperando_cliente`, `resuelto` o `cerrado`, **no lo reabre** (reabrir es cosa de una respuesta del cliente, que no existe en esta fase): el mensaje se agrega al hilo sin tocar el estado.
+- `adjuntoIds` opcional: ids de adjuntos ya subidos sueltos a este ticket (`POST /adjuntos` con `entidadTipo=ticket`); se re-parentan al mensaje recién creado. Un id que no sea un adjunto suelto de este ticket → `400 ADJUNTO_INVALIDO`.
+- Evento en el ticket: `respuesta_cliente` o `nota_interna`, con `{ mensajeId }`.
+
+→ `201 { data: <mensaje con adjuntos ya re-parentados> }` (no el detalle completo del ticket).
+
+### POST /tickets/:id/derivar · responsable actual, gestion, admin
+
+```json
+{ "destinoId": "…", "motivo": "Se requiere otra especialidad" }
+```
+Igual que `POST /ots/:id/derivar`, pero **sin** `mantenerComoColaborador` (el ticket no tiene colaboradores; si se envía, `.strict()` lo rechaza con `400`). Mismas reglas: `motivo` ≥ 10 caracteres, `destinoId` = usuario activo, no `sistema`, ≠ responsable actual (`400 DERIVACION_INVALIDA`); un `tecnico` que no es el responsable actual → `403 PERMISO_DENEGADO`; derivaciones simultáneas → gana una, la otra `409 CONFLICTO_CONCURRENCIA`. Evento `derivado {de,a,motivo}` y notificación (`tipo: "derivacion"`) para el destino. → `200 Detalle`.
+
+### POST /tickets/:id/convertir-a-ot · gestion, admin
+
+"Herencia completa" del ticket hacia una OT nueva:
+
+```json
+{ "titulo": "…", "descripcion": "…", "categoria": "soporte", "prioridad": "alta",
+  "ubicacion": "…", "fechaEstimadaTermino": "2026-10-01", "clienteId": "…", "areaInterna": "…", "esInterna": false }
+```
+- `categoria` es obligatorio; el resto opcional. `titulo`/`descripcion` por defecto vienen de `asunto`/`descripcion` del ticket; `prioridad` por defecto la del ticket.
+- `origen` de la OT se deriva del `canal` del ticket, **no editable**: `portal→mesa_ayuda`, `correo→correo`, `telefono→telefono`, `presencial→presencial`, `interno→interna`.
+- `clienteId`: si no viene y el ticket tiene cliente, se hereda; si el ticket no tiene cliente y no se indica `esInterna`, `400 CLIENTE_INVALIDO`. Consistencia `esInterna`/`clienteId`/`areaInterna` reutiliza el mismo chequeo que `POST /ots` (`400 VALIDATION_ERROR` con el mismo mensaje si es inconsistente).
+- `solicitanteNombre`/`solicitanteContacto` de la OT se completan desde el solicitante del ticket (email o teléfono).
+- `recepcionadoPor` de la OT = quien **recibió el ticket originalmente** (nunca quien ejecuta la conversión).
+- **Cadena de responsables**: se copian TODOS los tramos de `asignacion` del ticket (mismo `usuario`, `desde`, `hasta`, `motivoEntrada`, `derivadoPor`) como tramos de la OT, en el mismo orden. Si el ticket nunca se tomó, la OT arranca con un único tramo abierto para quien convierte.
+- `ticket_ot`: se inserta `{ esOrigen: true }`.
+- Evento `creado` en la OT, con `origenTicketId`/`origenTicketNumero` además de los campos habituales. Evento `vinculado_ot {otId,otNumero,esOrigen:true}` en el ticket.
+- Todo en una sola transacción.
+
+→ `201 { data: <Detalle de la OT> }` (mismo formato que `GET /ots/:id`).
+
+### POST/DELETE /tickets/:id/ots[/:otId] · gestion, admin
+
+Vincula o desvincula una OT **ya existente**, sin herencia (distinto de convertir-a-ot).
+
+- `POST /tickets/:id/ots` body `{ "otId": "…" }` → inserta el vínculo con `esOrigen: false` (el índice único filtrado de la BD solo permite un origen por OT, y este camino nunca lo pisa). Repetir el mismo par → `409 TICKET_OT_YA_VINCULADO`. `404 OT_NO_ENCONTRADA` / `404 TICKET_NO_ENCONTRADO`. Evento `vinculado_ot {otId,otNumero,esOrigen:false}` en el ticket. → `201 { data: <Detalle del ticket> }`.
+- `DELETE /tickets/:id/ots/:otId` → quita el vínculo (sea o no el de origen); **no deshace** lo ya heredado en la OT por una conversión previa, es solo la referencia cruzada de navegación. `404 TICKET_OT_NO_ENCONTRADO` si no estaban vinculados. Evento `ot_desvinculada {otId,otNumero}` en el ticket. → `200 { data: null }`.
+
+### GET /tickets/:id/eventos · lectura
+
+Timeline del ticket, más recientes primero. Misma forma que `eventos` en el detalle.
+
+---
+
 ## Adjuntos
 
-### POST /adjuntos · tecnico (responsable o colaborador de la OT; gestion/admin siempre)
+### POST /adjuntos · tecnico (responsable de la OT/ticket destino; gestion/admin siempre)
 
-`multipart/form-data` con los campos `entidadTipo=ot` (por ahora solo `ot`), `entidadId=<uuid de la OT>` y el archivo en el campo **`archivo`** (un solo archivo).
+`multipart/form-data` con los campos `entidadTipo` ∈ `ot|ticket|mensaje` (Fase 3: generalizado desde `ot`), `entidadId=<uuid de la OT, ticket o mensaje>` y el archivo en el campo **`archivo`** (un solo archivo).
 
 ```
 curl -H "Authorization: Bearer $TOKEN" -F entidadTipo=ot -F entidadId=$OT_ID -F "archivo=@informe.pdf;type=application/pdf" $BASE/api/v1/adjuntos
+curl -H "Authorization: Bearer $TOKEN" -F entidadTipo=ticket -F entidadId=$TICKET_ID -F "archivo=@foto.jpg;type=image/jpeg" $BASE/api/v1/adjuntos
 ```
 → `201 { data: { id, nombre, mime, tamanoBytes, estado, subidoPor, creadoEn } }`.
 
 - Lista blanca de **extensión y MIME** (deben corresponderse): pdf, png, jpg/jpeg, gif, webp, doc, docx, xls, xlsx, ppt, pptx, txt, csv, zip. Otro tipo → `415 ADJUNTO_TIPO_NO_PERMITIDO`.
-- Máx. 10 MB por archivo (`413 ADJUNTO_MUY_GRANDE`) y 25 MB por OT (`413 ADJUNTO_CUOTA_EXCEDIDA`). Archivo vacío o multipart mal formado → `400 ADJUNTO_INVALIDO`; OT inexistente → `404 OT_NO_ENCONTRADA`.
+- Máx. 10 MB por archivo (`413 ADJUNTO_MUY_GRANDE`) y 25 MB por `(entidadTipo, entidadId)` (`413 ADJUNTO_CUOTA_EXCEDIDA`). Archivo vacío o multipart mal formado → `400 ADJUNTO_INVALIDO`; entidad inexistente → `404 OT_NO_ENCONTRADA` / `404 TICKET_NO_ENCONTRADO` / `404 MENSAJE_NO_ENCONTRADO`.
+- Permiso: `entidadTipo=ot` usa `ot.policy.ts` (responsable actual, colaborador, o gestion/admin); `entidadTipo=ticket` y `entidadTipo=mensaje` usan `ticket.policy.ts` (solo el responsable actual del ticket, o gestion/admin — sin colaborador).
 - El nombre original se sanea (sin rutas) y solo se guarda para mostrarlo; en disco el archivo se llama como su sha256. `estado` queda `limpio` sin escaneo real (ver diseño: antivirus pendiente).
+- **Adjuntar a un mensaje de ticket**: el flujo normal del panel sube el archivo ANTES del mensaje con `entidadTipo=ticket` (queda "suelto" del ticket) y luego lo asocia pasando su `id` en `adjuntoIds` al crear el mensaje (`POST /tickets/:id/mensajes`), que lo re-parenta a `entidadTipo=mensaje`. Subir directo con `entidadTipo=mensaje` a un mensaje ya existente también funciona (mismo permiso), pero no es el camino que usa el panel.
 
 ### GET /adjuntos/:id/descargar · lectura
 
@@ -306,6 +452,12 @@ Stream autenticado (el frontend debe pedirlo con el token, p. ej. `fetch` + `blo
 ## Eventos de auditoría propios de una cotización (`eventos[].tipo` en `GET /cotizaciones/:id`)
 
 `cotizacion_editada {campos,montoClpAntes,montoClpDespues}`, `cotizacion_estado_cambiado {de,a}`. La creación y la vinculación no tienen copia del lado cotización: se leen desde el timeline de la OT (ver arriba) cuando la cotización tiene `otId`; sin `otId`, esos dos eventos simplemente no existen.
+
+## Eventos de auditoría de un ticket (`eventos[].tipo` en el detalle de ticket, Fase 3)
+
+`creado {numero,canal,recepcionadoPorId,clienteId}`, `estado_cambiado {de,a}`, `prioridad_cambiada {de,a}`, `ticket_editado {campos}`, `tomado {usuarioId}` (sin equivalente en OT: un ticket puede tomarse solo, una OT siempre nace con responsable), `derivado {de,a,motivo}` (sin `mantuvoComoColaborador`: el ticket no tiene colaboradores), `respuesta_cliente {mensajeId}`, `nota_interna {mensajeId}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `vinculado_ot {otId,otNumero,esOrigen}` (`esOrigen:true` si vino de `convertir-a-ot`, `false` si fue un vínculo manual), `ot_desvinculada {otId,otNumero}`.
+
+El evento `creado` de una **OT** nacida de una conversión (Fase 3) extiende el payload habitual con `origenTicketId`/`origenTicketNumero`, para componer "creada desde TK-000X por [actor]".
 
 ## Otros
 

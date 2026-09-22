@@ -241,7 +241,7 @@ export async function obtenerDetalleOt(id: string) {
   });
   if (!ot) throw otNoEncontrada();
 
-  const [colabs, tramos, etapas, horas, comentarios, adjuntos, eventos, cotizaciones] = await Promise.all([
+  const [colabs, tramos, etapas, horas, comentarios, adjuntos, eventos, cotizaciones, ticketsVinculados] = await Promise.all([
     AppDataSource.getRepository(OtColaborador).find({ where: { otId: id }, relations: { usuario: true }, order: { creadoEn: "ASC" } }),
     AppDataSource.getRepository(Asignacion).find({
       where: { entidadTipo: EntidadAsignable.OT, entidadId: id },
@@ -268,6 +268,13 @@ export async function obtenerDetalleOt(id: string) {
        FROM cotizacion WHERE ot_id = @0 ORDER BY version DESC`,
       [id],
     ) as Promise<FilaCotizacionOt[]>,
+    // Fase 3: tickets vinculados vía ticket_ot, el de origen primero (antes este campo era []).
+    AppDataSource.query(
+      `SELECT t.id, t.numero, t.asunto, t.estado, t.canal, tv.es_origen
+       FROM ticket_ot tv JOIN ticket t ON t.id = tv.ticket_id
+       WHERE tv.ot_id = @0 ORDER BY tv.es_origen DESC, tv.creado_en ASC`,
+      [id],
+    ) as Promise<Array<{ id: string; numero: string; asunto: string; estado: string; canal: string; es_origen: boolean }>>,
   ]);
 
   const ahora = Date.now();
@@ -327,8 +334,14 @@ export async function obtenerDetalleOt(id: string) {
       esPrincipal: !!c.es_principal,
       fecha: c.fecha,
     })),
-    // Se llena en la fase 3 (tickets).
-    tickets: [],
+    tickets: ticketsVinculados.map((t) => ({
+      id: t.id.toLowerCase(),
+      numero: t.numero,
+      asunto: t.asunto,
+      estado: t.estado,
+      canal: t.canal,
+      esOrigen: !!t.es_origen,
+    })),
   };
 }
 
