@@ -1520,3 +1520,97 @@ contrato no tiene un `DELETE` que revierta esa bandera. Backend/frontend propios
 verificación (puertos 3005/8083) quedaron **detenidos**; el `docker compose` persistente
 (3002/8082) se dejó exactamente como se encontró (corriendo, con el código de antes de Fase B —
 ver nota de infraestructura arriba).
+
+## Fase E2 — directorio de clientes (post-cierre del plan de 7 fases)
+
+Trabajo nuevo, fuera de la numeración 0–6: el backend de Clientes (`docs/api.md`, sección
+"Clientes") ya estaba completo desde la Fase 0 (`GET/POST/PATCH /clientes`), pero el frontend solo
+tenía lectura (`obtenerClientes`/`useClientes`, usados por varios selectores). Esta fase agrega la
+pantalla de administración que se había descartado explícitamente al inicio del proyecto: un
+directorio simple (nombre + activo), sin historial de OT/tickets/cotizaciones por cliente.
+
+Archivo nuevo:
+
+- `src/routes/clientes.tsx` — ruta `/clientes`: tabla (nombre, activo) + formulario de creación +
+  toggle activo/inactivo por fila. Mismo patrón exacto que
+  `src/components/configuracion/SeccionDepartamentos.tsx` (Fase B1): sin `DELETE` (no existe en el
+  backend), RBAC admin-only para escribir vía `puedeEscribirClientes`, lectura para cualquier rol
+  autenticado. A diferencia de Departamentos (una sección dentro de `/configuracion`), Clientes es
+  una ruta de nivel superior con su propio ítem de navegación — se decidió así porque el pedido
+  original ("agregar el directorio de clientes") lo trata como una pantalla propia, no como una
+  subsección de configuración, y clientes es una entidad de negocio de primer nivel (aparece en
+  OT/tickets/cotizaciones), no un catálogo de soporte como departamentos o temas de ayuda.
+
+Editado:
+
+- `src/lib/api/clientes.ts` — se agregaron `crearCliente`/`CrearClienteInput` y
+  `actualizarCliente`/`ActualizarClienteInput` (mismo patrón que `departamentos.ts`: `POST`/`PATCH`
+  con los mismos dos campos, `nombre?`/`activo?`). `obtenerClientes`/`Cliente` (Fase 0) no
+  cambiaron.
+- `src/hooks/useClientes.ts` — se agregaron `useCrearCliente`/`useActualizarCliente` (mutaciones de
+  TanStack Query, mismo criterio que `useDepartamentos.ts`: invalidan `["clientes"]` en
+  `onSuccess`, `toast.error` en `onError`). `useClientes()` (Fase 0) no cambió de comportamiento,
+  solo se movió a usar `api.obtenerClientes` con el resto de los imports del archivo.
+- `src/lib/labels.ts` — se agregó `puedeEscribirClientes(rol)` (`rol === "admin"`, mismo criterio
+  que `puedeEscribirDepartamentos`), función propia en vez de reutilizar otra, mismo criterio ya
+  documentado en fases anteriores para no acoplar superficies que hoy comparten condición.
+- `src/components/AppShell.tsx` — se agregó el ítem "Clientes" al array `nav` (entre "Cotizaciones"
+  y "Configuración") con el ícono `Building2` de `lucide-react` (no usado antes en `nav`; ya
+  aparecía como ícono de sección "Departamentos" en `configuracion.tsx`, mismo significado
+  visual — "entidad tipo empresa"). Sin otros cambios en el archivo.
+
+### Decisiones dentro del espacio permitido
+
+- **Sin conteo de OT por cliente**: el enunciado lo dejaba opcional ("si te sobra tiempo y es
+  simple"). Contar `GET /ots?clienteId=X` por cada fila de la tabla es una llamada por cliente
+  (N+1 desde el frontend, sin un endpoint agregado que devuelva el conteo por cliente en un solo
+  viaje) — se decidió no hacerlo: un directorio simple de nombre + activo ya cumple el pedido
+  original ("agregar el directorio de clientes"), y agregar N+1 llamadas por una cifra decorativa
+  no vale la complejidad ni el costo en el backend real.
+- **Ruta de nivel superior, no sección de `/configuracion`**: ver el archivo nuevo arriba.
+
+## Fase E2 — verificación
+
+`npx tsc --noEmit` limpio.
+
+**Nota de infraestructura de esta verificación**: el puerto configurado en `.claude/launch.json`
+para el backend (3002) y el 8080 que usa internamente el panel de navegador de esta sesión estaban
+ocupados por el forwarding de un contenedor Docker de otro proyecto del usuario (`siga-log-monitor`,
+ajeno a `siga-ot`), lo que bloqueó `preview_start`. Se levantó un backend propio (`npm run dev`,
+`PORT=3011`) y un frontend propio (`vite dev --port 3012`, con `VITE_API_URL` apuntado a `3011`
+solo mientras duró la verificación) contra la BD real, sin tocar el contenedor ajeno ni el resto
+del entorno. `.claude/launch.json` se tocó brevemente (se probó `autoPort: true`, sin efecto en el
+problema real) y quedó **revertido** a su contenido original al terminar.
+
+Recorrido real en navegador (backend propio puerto 3011, frontend propio puerto 3012, MCP de
+navegador):
+
+1. Con el admin seed existente (`admin`), se crearon dos usuarios desechables vía `POST /usuarios`:
+   `e2_admin_temp` (rol `admin`) y `e2_tecnico_temp` (rol `tecnico`) — nunca se reutilizaron
+   credenciales de fases anteriores para el recorrido en sí.
+2. Con `e2_admin_temp`: entró a `/clientes` desde el nuevo ítem del menú, creó "Cliente Prueba E2"
+   (`POST /clientes`, 201) y confirmó que aparece en la tabla. Confirmó también que el mismo cliente
+   aparece en el selector de "Nuevo ticket" (`useClientes()` compartido) primero tras una recarga
+   completa, y después creó un segundo cliente ("Cliente Prueba E2 SPA") y navegó por rutas internas
+   (`Link` de TanStack Router, sin recarga de página) hasta "Nuevo ticket": el cliente recién creado
+   ya aparecía en el selector sin recargar, confirmando que la invalidación de
+   `queryKey: ["clientes"]` propaga a cualquier componente montado que use el hook. Desactivó ambos
+   clientes de prueba (`PATCH /clientes/:id {activo:false}`, 200) desde la tabla.
+3. Con `e2_tecnico_temp`: en `/clientes` vio el aviso "Solo un administrador puede…", la tabla en
+   solo lectura (sin formulario "Agregar cliente") y los switches "Activo" deshabilitados — se
+   intentó hacer clic en uno igual y no se disparó ningún `PATCH /clientes/:id` (confirmado con
+   `read_network_requests`), o sea que el bloqueo es real y no solo visual.
+4. Consola del navegador revisada con `read_console_messages`: sin `TypeError` ni `Uncaught` en
+   todo el recorrido. **Hallazgo fuera de esta fase**: apenas inicia sesión cualquier rol no-admin,
+   aparecen `403 Forbidden` en `GET /usuarios` — bug preexistente de la Fase 0
+   (`src/hooks/useUsuarios.ts` solo depende de `estaAutenticado`, no del rol, y
+   `UsuariosYClientesReales` en `AppShell.tsx` lo llama siempre que hay sesión) sin relación con
+   Clientes; se dejó una sugerencia de tarea aparte para corregirlo, no se tocó en esta fase.
+
+Al terminar: `e2_admin_temp` y `e2_tecnico_temp` quedaron desactivados
+(`PATCH /usuarios/:id {activo:false}`, `200`) en `siga-tickets`. Los dos clientes de prueba
+("Cliente Prueba E2", "Cliente Prueba E2 SPA") quedaron **desactivados** (no hay `DELETE` para
+clientes) en vez de renombrados, porque el nombre ya deja claro que son de prueba y desactivado
+alcanza para que no aparezcan como opción activa en ningún selector nuevo. Backend/frontend propios
+de esta verificación (puertos 3011/3012) quedaron **detenidos**; ningún otro servicio del entorno
+se tocó.

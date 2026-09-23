@@ -195,3 +195,10 @@ export function puedeEscribirPlanesSla(rol: Rol): boolean {
 export function puedeEscribirPlantillasCorreo(rol: Rol): boolean {
   return rol === "admin";
 }
+
+// Clientes (Fase E2, directorio de clientes): POST/PATCH /clientes son admin-only, GET es lectura
+// para cualquier rol autenticado (docs/api.md, sección "Clientes"), mismo criterio que
+// Departamentos.
+export function puedeEscribirClientes(rol: Rol): boolean {
+  return rol === "admin";
+}

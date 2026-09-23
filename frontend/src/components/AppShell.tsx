@@ -1,6 +1,7 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Bell,
+  Building2,
   ChevronDown,
   FileText,
   Inbox,
@@ -62,6 +63,7 @@ const nav = [
   { to: "/linea-de-tiempo", label: "Línea de tiempo", icon: GanttChartSquare },
   { to: "/tickets", label: "Tickets", icon: Inbox },
   { to: "/cotizaciones", label: "Cotizaciones", icon: FileText },
+  { to: "/clientes", label: "Clientes", icon: Building2 },
   { to: "/configuracion", label: "Configuración", icon: Settings },
 ];
 
