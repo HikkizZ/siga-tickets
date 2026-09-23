@@ -34,6 +34,7 @@ Confirmado antes de tocar nada: `npm install` limpio (414 paquetes, 0 vulnerabil
 - **Fase 2**: hecha (2026-09-23). Detalle abajo.
 - **Fase 3**: hecha (2026-09-23). Detalle abajo.
 - **Fase 4**: hecha (2026-09-23). Detalle abajo.
+- **Fase 5**: hecha (2026-09-23). Detalle abajo.
 
 ## Fase 0 — qué quedó
 
@@ -859,3 +860,165 @@ terminar — confirmado con `curl`/`Invoke-WebRequest` a `http://localhost:3002/
 `http://localhost:8080/` (ambos sin respuesta) tras identificar y detener el proceso real del
 backend por su PID (`Get-NetTCPConnection -LocalPort 3002`), ya que en esta sesión `pkill` por
 patrón de comando no encontró el proceso de Windows correspondiente.
+
+## Fase 5 — qué quedó
+
+Portal público de la mesa de ayuda (`/mesa-de-ayuda`, `/mesa-de-ayuda/seguimiento`) contra
+`/publico/*` (docs/api.md, sección "Pública (Fase 5)"), reemplazando el 100% mock que traían ambas
+rutas (`useOTStore().crearTicket`/`responderComoCliente`).
+
+Archivos nuevos:
+
+- `src/lib/api/portal.ts` — funciones de red puras contra `/publico/*` (mismo patrón que
+  `tickets.ts`/`ots.ts`, pero todas sobre `publicApiClient`, nunca `apiClient`): `crearTicketPublico`
+  (`POST /publico/tickets`, multipart con `nombre,correo,empresa?,asunto,descripcion,prioridad?` +
+  archivos en el campo `adjuntos` + un `captchaToken` placeholder fijo — ver decisión de captcha
+  abajo), `solicitarSeguimiento` (`POST /publico/tickets/seguimiento`), `obtenerTicketPublico`
+  (`GET /publico/ticket`, tipo `TicketPublico` reducido tal cual lo documenta `api.md`: sin id
+  interno, `mensajes` sin notas internas, `ot` sin horas/montos/cotizaciones),
+  `responderComoClientePublico` (`POST /publico/ticket/mensajes`, multipart `cuerpo` + `adjuntos?`
+  en la misma request) y `adjuntarArchivoPublico` (`POST /publico/adjuntos`, un solo archivo en el
+  campo `archivo`).
+- `src/lib/portal/token.ts` — el token de portal (JWT `scope:"portal"`, TTL 15 min) en
+  `sessionStorage` (no `localStorage`, a propósito: portal de cara al público, equipos
+  compartidos), junto con el `numero` del ticket al que corresponde. Mismos try/catch de SSR/modo
+  privado que `src/lib/auth/token.ts`, pero es un módulo separado — nunca se mezcla con el JWT
+  interno.
+- `src/hooks/usePortal.ts` — hooks de TanStack Query (mismo criterio que `useTickets.ts`), sin
+  invalidación cruzada con `["tickets"]`/`["ots"]` (el portal no comparte caché con el panel):
+  `useCrearTicketPublico`, `useSolicitarSeguimiento` (al llegar el token lo guarda de inmediato con
+  `setPortalToken`), `useTicketPublico` (`retry:false` — un 401 nunca se arregla reintentando),
+  `useResponderComoClientePublico`, `useAdjuntarArchivoPublico`, `useLimpiarCachePortal` (limpia del
+  caché de React Query el detalle por token, al volver al formulario de búsqueda).
+
+Editados:
+
+- `src/lib/api/client.ts` — se agregó `publicApiClient.postForm` (mismo criterio que
+  `apiClient.postForm` de la Fase 1: multipart/form-data, sin `Content-Type` manual), pero contra
+  `PORTAL_URL` y con `portalToken` opcional (se manda como `Authorization: Bearer <portalToken>`,
+  nunca el JWT interno). Los tres endpoints multipart del portal lo usan.
+- `src/routes/mesa-de-ayuda/index.tsx` — reescrita: formulario real contra
+  `POST /publico/tickets`. `prioridad` usa los valores reales (`alta|media|baja`, default `media`,
+  `PRIORIDADES`/`etiquetaPrioridad` de `labels.ts`) en vez de las etiquetas mock en mayúscula. El
+  bloque "Adjuntos (demostración)" (que solo agregaba nombres falsos) se reemplazó por un input de
+  archivo real de selección múltiple (`<input type="file" multiple>` oculto, disparado por un
+  botón, con chips removibles antes de enviar), mandado en el mismo `POST /publico/tickets` junto
+  con el resto del formulario. La pantalla de confirmación muestra el `numero` real (`TK-xxxx`)
+  devuelto por el backend — nunca un id interno, que el backend ni siquiera entrega.
+- `src/routes/mesa-de-ayuda/seguimiento.tsx` — reescrita: dos pasos reales. Buscar
+  (`numero`+`email`+captcha placeholder → `POST /publico/tickets/seguimiento`; éxito guarda el
+  token de portal y muestra el detalle, error muestra el mensaje genérico real del backend
+  ("No pudimos validar esos datos") tal cual, sin distinguir causa) y Detalle
+  (`GET /publico/ticket` con el token guardado; responder como cliente vía
+  `POST /publico/ticket/mensajes` con adjuntos opcionales, refrescando el detalle después; un 401
+  en cualquier momento limpia el token guardado y vuelve al formulario con un mensaje claro). Se
+  agregó una sección "¿Tienes otra evidencia para adjuntar?" (`POST /publico/adjuntos`, ver decisión
+  abajo). `EstadoTicketBadge` (`TicketBadges.tsx`) y `formatoFecha` (`mock-data.ts`) se reutilizan
+  tal cual pide el enunciado, con un cast explícito y comentado (`as EstadoTicketMock`) donde
+  `etiquetaEstadoTicket()` produce exactamente los mismos literales españoles que ya espera ese
+  componente tipado al mock.
+
+Fuera de alcance, sin tocar: `RouteGuard.tsx` (ya eximía `/mesa-de-ayuda*` desde la Fase 0),
+`AppShell.tsx` (el portal sigue sin usarlo, confirmado que ya se auto-excluye por `pathname`),
+`apiClient` interno, `mock-data.ts`/`ot-store.tsx` (`crearTicket`/`responderComoCliente`/tickets
+mock siguen ahí sin tocar — ya nadie los llama desde las dos rutas de esta fase, pero no se
+borraron), dashboard, buscador global (Fase 6).
+
+### Decisiones dentro del espacio permitido
+
+- **Captcha**: `NoopCaptcha` del lado del backend acepta cualquier `captchaToken` no vacío (no hay
+  proveedor real todavía). Se usa un valor fijo placeholder (`"portal-sin-captcha-real"`,
+  constante en `src/lib/api/portal.ts`) en los tres envíos que lo exigen — no se montó ningún
+  widget de Turnstile/hCaptcha, no es parte de esta fase ni existe del lado del backend.
+- **Token de portal en `sessionStorage`**: decisión explícita del enunciado, documentada en
+  `src/lib/portal/token.ts` — el portal es de cara al público, posiblemente en equipos
+  compartidos, y el token expira solo en 15 minutos de todas formas.
+- **Sin hooks de detalle de adjuntos en el portal**: `GET /publico/ticket` (confirmado contra
+  `docs/api.md`) no expone ningún id de adjunto, ni por mensaje ni a nivel de ticket — a
+  diferencia del panel interno, el DTO reducido del portal simplemente no lo trae. Por eso no hay
+  ninguna lista ni botón de descarga de adjuntos en el detalle público: no hay ningún id al cual
+  apuntar. `POST /publico/adjuntos` (botón "Adjuntar otro archivo") solo confirma que el archivo se
+  recibió, sin listarlo después — extensión barata que se implementó igual (el enunciado la
+  dejaba opcional), pero acotada a lo que el DTO realmente permite mostrar.
+- **Sin descarga de adjuntos en el portal**: por la misma razón de arriba — no hay ningún id de
+  adjunto disponible en ninguna respuesta pública al cual enlazar una descarga. Se verificó de
+  todas formas, por el camino indirecto del panel interno, que los archivos subidos vía
+  `POST /publico/tickets` (`adjuntos`) y `POST /publico/adjuntos` (`archivo`) sí llegan
+  correctamente al ticket y son descargables desde ahí (ver verificación abajo).
+- **Bug de hidratación encontrado y corregido durante el recorrido, fuera del alcance escrito pero
+  necesario**: la primera versión de `seguimiento.tsx` leía el token de portal guardado
+  (`getPortalToken()`) directo en el inicializador de `useState`, lo que corre tanto en el render
+  del servidor (TanStack Start hace SSR) como en la hidratación del cliente. El servidor nunca
+  tiene `sessionStorage`, así que siempre renderizaba el formulario de búsqueda; si el cliente ya
+  tenía un token guardado de una visita anterior, hidrataba con el árbol del detalle del ticket —
+  un mismatch real, confirmado como `Uncaught` en la consola del navegador durante la
+  verificación. Se corrigió con el mismo patrón que ya usa `AuthProvider.tsx` para el JWT interno:
+  arrancar en `null` (igual que el servidor) y leer `sessionStorage` recién dentro de un
+  `useEffect`, después de montar. Confirmado el fix con una pestaña nueva, token ya guardado y
+  navegación completa (no un `Link` interno): consola sin errores.
+
+## Fase 5 — verificación
+
+`npx tsc --noEmit` limpio (confirmado antes y después del fix de hidratación).
+
+Recorrido real en navegador (backend `npm run dev` contra la BD real `siga-tickets`, frontend
+`npm run dev` puerto 8080, MCP de navegador), sin sesión interna iniciada para el portal:
+
+1. `/mesa-de-ayuda`: formulario completado con datos reales (nombre, correo, empresa, prioridad
+   `Alta`, asunto, descripción) y enviado → `POST /publico/tickets` (201) → pantalla de
+   confirmación mostró el número real **TK-0002**, sin ningún id interno visible. El selector de
+   archivo nativo del SO no se puede automatizar desde el MCP de navegador (mismo límite ya
+   documentado en las Fases 1 y 3), así que el adjunto real de creación se probó por un camino
+   equivalente: `curl` contra el mismo endpoint (`POST /publico/tickets`, multipart con
+   `adjuntos=@archivo`) creó un segundo ticket (**TK-0003**) con un adjunto real, confirmado luego
+   en el panel interno (nombre de archivo correcto, tipo `text/plain`, botón "Descargar" funcional).
+2. `/mesa-de-ayuda/seguimiento`: buscado con correo equivocado → "No pudimos validar esos datos".
+   Buscado con un número inexistente (`TK-9999`) y el correo correcto → **exactamente el mismo**
+   mensaje, confirmando que el frontend no intenta distinguir ni endurecer la causa. Buscado con
+   `TK-0002` + correo correcto → `POST /publico/tickets/seguimiento` (200), token de portal
+   guardado, detalle cargado: asunto, descripción, estado "Nuevo", fecha real, sin mensajes
+   (confirmado que `GET /publico/ticket` no modela la descripción inicial como un mensaje de
+   conversación — coincide con lo documentado, nada que ajustar en el frontend).
+3. Respondido como cliente desde el detalle (`POST /publico/ticket/mensajes`) → tras el envío se
+   refrescó el detalle automáticamente y el mensaje apareció en la conversación con autor "Tú".
+4. **Verificación cruzada con el panel interno**: admin desechable nuevo por variables de entorno
+   al script `seed.ts` (`SEED_ADMIN_USERNAME=qa_felipe_admin_f5`, contraseña de un solo uso
+   generada con `openssl rand -hex 16`, nunca guardada en el repo) y, con su token, un usuario
+   `tecnico` (`qa_felipe_tec_f5`). Con `qa_felipe_tec_f5` en `/tickets`: **TK-0002** apareció con
+   canal **Portal**, prioridad **Alta**, **Sin asignar**, recepcionado por **Sistema** — todo
+   coincide con `docs/api.md`. Se tomó el ticket (`POST /tickets/:id/tomar`) y se respondió como
+   staff (`POST /tickets/:id/mensajes`, `respuesta_cliente`) → el mensaje del cliente del paso 3
+   apareció en el hilo interno con el autor externo correcto (`juan.qa.fase5@cliente.cl`, sin
+   usuario interno asociado). Sin volver a buscar en el portal (recarga de la misma URL, mismo
+   token de portal todavía vigente): el detalle público mostró el estado ya recalculado a
+   **Abierto** y la respuesta del staff con autor "Taller OT" — confirmando que el backend reabre/
+   avanza el ticket y que el token de portal sigue sirviendo para refrescar sin volver a
+   autenticarse.
+5. `POST /publico/adjuntos` (botón "Adjuntar otro archivo") probado con `curl` (mismo límite del
+   selector nativo) contra el token de portal vigente de TK-0002 → `201`, y el archivo apareció
+   correctamente en "Adjuntos del ticket" del panel interno.
+6. Token inválido: en vez de esperar los 15 minutos completos, se corrompió a mano el valor
+   guardado en `sessionStorage` (`siga-ot:portal-token`) y se recargó la página → `GET
+   /publico/ticket` devolvió 401, el frontend limpió el token guardado y volvió al formulario de
+   búsqueda con "Tu sesión de seguimiento expiró, vuelve a consultar tu ticket." — confirmado que
+   `sessionStorage` quedó realmente vacío después. No se esperó la expiración real de 15 minutos
+   (no practicable dentro del tiempo de esta verificación), pero el manejo de 401 quedó probado de
+   punta a punta con un token corrupto, camino idéntico en código al de un token vencido.
+7. Consola del navegador revisada en ambas páginas del portal, con pestañas nuevas y navegación
+   completa (no `Link` interno, para forzar SSR + hidratación real): sin errores no controlados.
+   Se encontró y corrigió en el camino un mismatch de hidratación real (ver decisión arriba);
+   confirmado limpio después del fix, incluido el caso que lo disparaba (token ya guardado en
+   `sessionStorage` antes de una navegación completa a `/mesa-de-ayuda/seguimiento`). Los únicos
+   `error` de consola vistos durante el recorrido fueron los 401/403 esperados de `AppShell.tsx`
+   intentando pedir datos autenticados sin sesión (comportamiento preexistente de fases anteriores,
+   no introducido por esta fase) y ruido de conexión rechazada de antes de levantar el backend.
+
+Al terminar: `qa_felipe_tec_f5` quedó desactivado (`PATCH /usuarios/:id {activo:false}`, `200`). El
+admin de prueba `qa_felipe_admin_f5` **no** se pudo desactivar a sí mismo (`409 CONFLICT`, mismo
+bloqueo ya documentado desde la Fase 0); queda activo en `siga-tickets` con una contraseña de un
+solo uso que no quedó en ningún archivo del repo. Los tickets de prueba (`TK-0002`, `TK-0003`) y el
+archivo temporal usado como adjunto real se dejaron tal cual (no hay endpoint para borrar tickets;
+el archivo temporal vivía fuera del repo, en la carpeta de scratchpad de la sesión, y se eliminó al
+terminar). Backend y frontend quedaron **detenidos** al terminar — confirmado con `curl` a
+`http://localhost:3002/health` y `http://localhost:8080/` (ambos sin respuesta) tras detener el
+proceso real del backend por su PID (`Get-NetTCPConnection -LocalPort 3002`, `taskkill /T /F`).

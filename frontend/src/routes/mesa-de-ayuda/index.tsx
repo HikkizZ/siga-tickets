@@ -1,14 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { CheckCircle2, Paperclip, Plus, Send } from "lucide-react";
+import { useRef, useState } from "react";
+import { CheckCircle2, Paperclip, Send, X } from "lucide-react";
 import { PortalLayout } from "@/components/PortalLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useOTStore } from "@/lib/ot-store";
-import type { Prioridad } from "@/lib/mock-data";
+import { PRIORIDADES, etiquetaPrioridad, type Prioridad } from "@/lib/labels";
+import { useCrearTicketPublico } from "@/hooks/usePortal";
 
 export const Route = createFileRoute("/mesa-de-ayuda/")({
   head: () => ({
@@ -32,17 +32,20 @@ export const Route = createFileRoute("/mesa-de-ayuda/")({
 });
 
 function MesaDeAyuda() {
-  const { crearTicket } = useOTStore();
+  const crearTicket = useCrearTicketPublico();
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
   const [empresa, setEmpresa] = useState("");
   const [asunto, setAsunto] = useState("");
   const [descripcion, setDescripcion] = useState("");
-  const [prioridad, setPrioridad] = useState<Prioridad>("Media");
-  const [adjuntos, setAdjuntos] = useState<string[]>([]);
-  const [creado, setCreado] = useState<string | null>(null);
+  const [prioridad, setPrioridad] = useState<Prioridad>("media");
+  const [archivos, setArchivos] = useState<File[]>([]);
+  const [numeroCreado, setNumeroCreado] = useState<string | null>(null);
+  const inputArchivoRef = useRef<HTMLInputElement>(null);
 
-  if (creado) {
+  const listo = nombre.trim() !== "" && email.trim() !== "" && asunto.trim() !== "";
+
+  if (numeroCreado) {
     return (
       <PortalLayout accion={{ to: "/mesa-de-ayuda/seguimiento", label: "Consultar un ticket" }}>
         <div className="rounded-xl border border-border bg-card p-6 text-center card-elev sm:p-10">
@@ -50,8 +53,8 @@ function MesaDeAyuda() {
           <h1 className="mt-4 text-xl font-semibold tracking-tight">Recibimos tu solicitud</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Tu número de ticket es{" "}
-            <span className="font-mono font-semibold text-foreground">{creado}</span>. Guárdalo para
-            revisar el avance.
+            <span className="font-mono font-semibold text-foreground">{numeroCreado}</span>. Guárdalo
+            para revisar el avance.
           </p>
           <p className="mt-1 text-sm text-muted-foreground">Te enviamos una copia a tu correo.</p>
           <div className="mt-6 flex flex-wrap justify-center gap-2">
@@ -62,10 +65,10 @@ function MesaDeAyuda() {
               variant="outline"
               className="h-10"
               onClick={() => {
-                setCreado(null);
+                setNumeroCreado(null);
                 setAsunto("");
                 setDescripcion("");
-                setAdjuntos([]);
+                setArchivos([]);
               }}
             >
               Crear otro ticket
@@ -85,20 +88,24 @@ function MesaDeAyuda() {
 
       <form
         className="mt-6 space-y-5 rounded-xl border border-border bg-card p-5 card-elev sm:p-6"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          if (!nombre.trim() || !email.trim() || !asunto.trim()) return;
-          const id = crearTicket({
-            asunto: asunto.trim(),
-            descripcion: descripcion.trim(),
-            solicitanteNombre: nombre.trim(),
-            solicitanteEmail: email.trim(),
-            ...(empresa.trim() ? { empresa: empresa.trim() } : {}),
-            prioridad,
-            canal: "Portal",
-            adjuntos,
-          });
-          setCreado(id);
+          if (!listo) return;
+          try {
+            const resultado = await crearTicket.mutateAsync({
+              nombre: nombre.trim(),
+              correo: email.trim(),
+              ...(empresa.trim() ? { empresa: empresa.trim() } : {}),
+              asunto: asunto.trim(),
+              descripcion: descripcion.trim(),
+              prioridad,
+              ...(archivos.length > 0 ? { archivos } : {}),
+            });
+            setNumeroCreado(resultado.numero);
+          } catch {
+            // El toast de error ya lo muestra useCrearTicketPublico (onError); acá solo se evita
+            // que la promesa rechazada de mutateAsync quede sin capturar en la consola.
+          }
         }}
       >
         <div className="grid gap-5 sm:grid-cols-2">
@@ -142,12 +149,12 @@ function MesaDeAyuda() {
             <Label className="text-xs">Urgencia sugerida</Label>
             <Select value={prioridad} onValueChange={(v) => setPrioridad(v as Prioridad)}>
               <SelectTrigger className="h-10 text-sm">
-                <span>{prioridad}</span>
+                <span>{etiquetaPrioridad(prioridad)}</span>
               </SelectTrigger>
               <SelectContent>
-                {(["Alta", "Media", "Baja"] as Prioridad[]).map((p) => (
+                {PRIORIDADES.map((p) => (
                   <SelectItem key={p} value={p}>
-                    {p}
+                    {etiquetaPrioridad(p)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -183,13 +190,32 @@ function MesaDeAyuda() {
         <div className="space-y-2">
           <Label className="text-xs">Adjuntos (opcional)</Label>
           <div className="flex flex-wrap items-center gap-2">
-            {adjuntos.map((a) => (
+            <input
+              ref={inputArchivoRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  setArchivos((prev) => [...prev, ...Array.from(e.target.files ?? [])]);
+                  e.target.value = "";
+                }
+              }}
+            />
+            {archivos.map((a, i) => (
               <span
-                key={a}
+                key={`${a.name}-${i}`}
                 className="inline-flex items-center gap-1.5 rounded border border-border bg-muted px-2 py-1 text-[11px] text-muted-foreground"
               >
                 <Paperclip className="size-3" />
-                {a}
+                {a.name}
+                <button
+                  type="button"
+                  onClick={() => setArchivos((prev) => prev.filter((_, idx) => idx !== i))}
+                  className="text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <X className="size-3" />
+                </button>
               </span>
             ))}
             <Button
@@ -197,18 +223,15 @@ function MesaDeAyuda() {
               variant="outline"
               size="sm"
               className="h-9"
-              onClick={() => setAdjuntos((prev) => [...prev, `adjunto-${prev.length + 1}.jpg`])}
+              onClick={() => inputArchivoRef.current?.click()}
             >
-              <Plus className="size-4" /> Agregar archivo
+              <Paperclip className="size-4" /> Agregar archivo
             </Button>
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            Demostración: los archivos se registran solo como nombre.
-          </p>
         </div>
 
-        <Button type="submit" className="h-11 w-full sm:w-auto">
-          <Send className="size-4" /> Enviar solicitud
+        <Button type="submit" className="h-11 w-full sm:w-auto" disabled={!listo || crearTicket.isPending}>
+          <Send className="size-4" /> {crearTicket.isPending ? "Enviando…" : "Enviar solicitud"}
         </Button>
       </form>
     </PortalLayout>

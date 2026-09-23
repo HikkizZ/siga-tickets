@@ -136,9 +136,9 @@ export const apiClient = {
 
 type OpcionesLlamadaPublica = Omit<OpcionesLlamada, "auth"> & { portalToken?: string };
 
-// Cliente para /publico/*: sin Authorization por defecto. Las fases futuras (portal de
-// seguimiento) le pasan `portalToken` con el JWT de scope "portal" de 15 min. No se usa
-// en ninguna pantalla todavía — esta fase solo deja la forma lista.
+// Cliente para /publico/*: sin Authorization por defecto. Desde la Fase 5, el portal de
+// seguimiento le pasa `portalToken` con el JWT de scope "portal" de 15 min en las rutas que lo
+// exigen (docs/api.md, sección "Pública (Fase 5)").
 async function ejecutarPublico<T>(
   ruta: string,
   method: Metodo,
@@ -160,8 +160,31 @@ async function ejecutarPublico<T>(
   return interpretarRespuesta<T>(res);
 }
 
+// POST multipart/form-data contra /publico/*: mismo criterio que `ejecutarForm` (cliente
+// interno), pero con `portalToken` (JWT de scope "portal") en vez del JWT interno del usuario.
+async function ejecutarFormPublico<T>(
+  ruta: string,
+  formData: FormData,
+  opciones: Pick<OpcionesLlamadaPublica, "portalToken" | "signal"> = {},
+): Promise<Respuesta<T>> {
+  const { portalToken, signal } = opciones;
+  const headers: Record<string, string> = {};
+  if (portalToken) headers["Authorization"] = `Bearer ${portalToken}`;
+
+  const res = await fetch(`${PORTAL_URL}${ruta}`, {
+    method: "POST",
+    headers,
+    body: formData,
+    ...(signal ? { signal } : {}),
+  });
+
+  return interpretarRespuesta<T>(res);
+}
+
 export const publicApiClient = {
   get: <T>(ruta: string, opciones?: OpcionesLlamadaPublica) => ejecutarPublico<T>(ruta, "GET", undefined, opciones),
   post: <T>(ruta: string, body?: unknown, opciones?: OpcionesLlamadaPublica) =>
     ejecutarPublico<T>(ruta, "POST", body, opciones),
+  postForm: <T>(ruta: string, formData: FormData, opciones?: Pick<OpcionesLlamadaPublica, "portalToken" | "signal">) =>
+    ejecutarFormPublico<T>(ruta, formData, opciones),
 };
