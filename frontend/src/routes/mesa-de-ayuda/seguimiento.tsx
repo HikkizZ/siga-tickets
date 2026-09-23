@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, CalendarClock, Check, Paperclip, Search, Send, User, Wrench } from "lucide-react";
 import { PortalLayout } from "@/components/PortalLayout";
@@ -157,6 +157,12 @@ function Seguimiento() {
             <Search className="size-4" /> {solicitarSeguimiento.isPending ? "Buscando…" : "Ver mi ticket"}
           </Button>
         </form>
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          ¿Tienes una cuenta?{" "}
+          <Link to="/mesa-de-ayuda/cuenta/login" className="font-medium text-primary hover:underline">
+            Inicia sesión para ver todos tus tickets
+          </Link>
+        </p>
       </PortalLayout>
     );
   }

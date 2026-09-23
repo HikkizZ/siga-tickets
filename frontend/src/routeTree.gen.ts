@@ -22,6 +22,10 @@ import { Route as TicketsRouteImport } from './routes/tickets'
 import { Route as TodasLasOtRouteImport } from './routes/todas-las-ot'
 import { Route as MesaDeAyudaIndexRouteImport } from './routes/mesa-de-ayuda/index'
 import { Route as MesaDeAyudaSeguimientoRouteImport } from './routes/mesa-de-ayuda/seguimiento'
+import { Route as MesaDeAyudaCuentaLoginRouteImport } from './routes/mesa-de-ayuda/cuenta/login'
+import { Route as MesaDeAyudaCuentaMisTicketsRouteImport } from './routes/mesa-de-ayuda/cuenta/mis-tickets'
+import { Route as MesaDeAyudaCuentaRegistroRouteImport } from './routes/mesa-de-ayuda/cuenta/registro'
+import { Route as MesaDeAyudaCuentaTicketsNumeroRouteImport } from './routes/mesa-de-ayuda/cuenta/tickets/$numero'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -88,6 +92,29 @@ const MesaDeAyudaSeguimientoRoute = MesaDeAyudaSeguimientoRouteImport.update({
   path: '/mesa-de-ayuda/seguimiento',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MesaDeAyudaCuentaLoginRoute = MesaDeAyudaCuentaLoginRouteImport.update({
+  id: '/mesa-de-ayuda/cuenta/login',
+  path: '/mesa-de-ayuda/cuenta/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MesaDeAyudaCuentaMisTicketsRoute =
+  MesaDeAyudaCuentaMisTicketsRouteImport.update({
+    id: '/mesa-de-ayuda/cuenta/mis-tickets',
+    path: '/mesa-de-ayuda/cuenta/mis-tickets',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const MesaDeAyudaCuentaRegistroRoute =
+  MesaDeAyudaCuentaRegistroRouteImport.update({
+    id: '/mesa-de-ayuda/cuenta/registro',
+    path: '/mesa-de-ayuda/cuenta/registro',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const MesaDeAyudaCuentaTicketsNumeroRoute =
+  MesaDeAyudaCuentaTicketsNumeroRouteImport.update({
+    id: '/mesa-de-ayuda/cuenta/tickets/$numero',
+    path: '/mesa-de-ayuda/cuenta/tickets/$numero',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -103,6 +130,10 @@ export interface FileRoutesByFullPath {
   '/todas-las-ot': typeof TodasLasOtRoute
   '/mesa-de-ayuda/seguimiento': typeof MesaDeAyudaSeguimientoRoute
   '/mesa-de-ayuda/': typeof MesaDeAyudaIndexRoute
+  '/mesa-de-ayuda/cuenta/login': typeof MesaDeAyudaCuentaLoginRoute
+  '/mesa-de-ayuda/cuenta/mis-tickets': typeof MesaDeAyudaCuentaMisTicketsRoute
+  '/mesa-de-ayuda/cuenta/registro': typeof MesaDeAyudaCuentaRegistroRoute
+  '/mesa-de-ayuda/cuenta/tickets/$numero': typeof MesaDeAyudaCuentaTicketsNumeroRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -118,6 +149,10 @@ export interface FileRoutesByTo {
   '/todas-las-ot': typeof TodasLasOtRoute
   '/mesa-de-ayuda/seguimiento': typeof MesaDeAyudaSeguimientoRoute
   '/mesa-de-ayuda': typeof MesaDeAyudaIndexRoute
+  '/mesa-de-ayuda/cuenta/login': typeof MesaDeAyudaCuentaLoginRoute
+  '/mesa-de-ayuda/cuenta/mis-tickets': typeof MesaDeAyudaCuentaMisTicketsRoute
+  '/mesa-de-ayuda/cuenta/registro': typeof MesaDeAyudaCuentaRegistroRoute
+  '/mesa-de-ayuda/cuenta/tickets/$numero': typeof MesaDeAyudaCuentaTicketsNumeroRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -134,6 +169,10 @@ export interface FileRoutesById {
   '/todas-las-ot': typeof TodasLasOtRoute
   '/mesa-de-ayuda/seguimiento': typeof MesaDeAyudaSeguimientoRoute
   '/mesa-de-ayuda/': typeof MesaDeAyudaIndexRoute
+  '/mesa-de-ayuda/cuenta/login': typeof MesaDeAyudaCuentaLoginRoute
+  '/mesa-de-ayuda/cuenta/mis-tickets': typeof MesaDeAyudaCuentaMisTicketsRoute
+  '/mesa-de-ayuda/cuenta/registro': typeof MesaDeAyudaCuentaRegistroRoute
+  '/mesa-de-ayuda/cuenta/tickets/$numero': typeof MesaDeAyudaCuentaTicketsNumeroRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -151,6 +190,10 @@ export interface FileRouteTypes {
     | '/todas-las-ot'
     | '/mesa-de-ayuda/seguimiento'
     | '/mesa-de-ayuda/'
+    | '/mesa-de-ayuda/cuenta/login'
+    | '/mesa-de-ayuda/cuenta/mis-tickets'
+    | '/mesa-de-ayuda/cuenta/registro'
+    | '/mesa-de-ayuda/cuenta/tickets/$numero'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -166,6 +209,10 @@ export interface FileRouteTypes {
     | '/todas-las-ot'
     | '/mesa-de-ayuda/seguimiento'
     | '/mesa-de-ayuda'
+    | '/mesa-de-ayuda/cuenta/login'
+    | '/mesa-de-ayuda/cuenta/mis-tickets'
+    | '/mesa-de-ayuda/cuenta/registro'
+    | '/mesa-de-ayuda/cuenta/tickets/$numero'
   id:
     | '__root__'
     | '/'
@@ -181,6 +228,10 @@ export interface FileRouteTypes {
     | '/todas-las-ot'
     | '/mesa-de-ayuda/seguimiento'
     | '/mesa-de-ayuda/'
+    | '/mesa-de-ayuda/cuenta/login'
+    | '/mesa-de-ayuda/cuenta/mis-tickets'
+    | '/mesa-de-ayuda/cuenta/registro'
+    | '/mesa-de-ayuda/cuenta/tickets/$numero'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -197,6 +248,10 @@ export interface RootRouteChildren {
   TodasLasOtRoute: typeof TodasLasOtRoute
   MesaDeAyudaSeguimientoRoute: typeof MesaDeAyudaSeguimientoRoute
   MesaDeAyudaIndexRoute: typeof MesaDeAyudaIndexRoute
+  MesaDeAyudaCuentaLoginRoute: typeof MesaDeAyudaCuentaLoginRoute
+  MesaDeAyudaCuentaMisTicketsRoute: typeof MesaDeAyudaCuentaMisTicketsRoute
+  MesaDeAyudaCuentaRegistroRoute: typeof MesaDeAyudaCuentaRegistroRoute
+  MesaDeAyudaCuentaTicketsNumeroRoute: typeof MesaDeAyudaCuentaTicketsNumeroRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -292,6 +347,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MesaDeAyudaSeguimientoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/mesa-de-ayuda/cuenta/login': {
+      id: '/mesa-de-ayuda/cuenta/login'
+      path: '/mesa-de-ayuda/cuenta/login'
+      fullPath: '/mesa-de-ayuda/cuenta/login'
+      preLoaderRoute: typeof MesaDeAyudaCuentaLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mesa-de-ayuda/cuenta/mis-tickets': {
+      id: '/mesa-de-ayuda/cuenta/mis-tickets'
+      path: '/mesa-de-ayuda/cuenta/mis-tickets'
+      fullPath: '/mesa-de-ayuda/cuenta/mis-tickets'
+      preLoaderRoute: typeof MesaDeAyudaCuentaMisTicketsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mesa-de-ayuda/cuenta/registro': {
+      id: '/mesa-de-ayuda/cuenta/registro'
+      path: '/mesa-de-ayuda/cuenta/registro'
+      fullPath: '/mesa-de-ayuda/cuenta/registro'
+      preLoaderRoute: typeof MesaDeAyudaCuentaRegistroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mesa-de-ayuda/cuenta/tickets/$numero': {
+      id: '/mesa-de-ayuda/cuenta/tickets/$numero'
+      path: '/mesa-de-ayuda/cuenta/tickets/$numero'
+      fullPath: '/mesa-de-ayuda/cuenta/tickets/$numero'
+      preLoaderRoute: typeof MesaDeAyudaCuentaTicketsNumeroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -309,6 +392,10 @@ const rootRouteChildren: RootRouteChildren = {
   TodasLasOtRoute: TodasLasOtRoute,
   MesaDeAyudaSeguimientoRoute: MesaDeAyudaSeguimientoRoute,
   MesaDeAyudaIndexRoute: MesaDeAyudaIndexRoute,
+  MesaDeAyudaCuentaLoginRoute: MesaDeAyudaCuentaLoginRoute,
+  MesaDeAyudaCuentaMisTicketsRoute: MesaDeAyudaCuentaMisTicketsRoute,
+  MesaDeAyudaCuentaRegistroRoute: MesaDeAyudaCuentaRegistroRoute,
+  MesaDeAyudaCuentaTicketsNumeroRoute: MesaDeAyudaCuentaTicketsNumeroRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

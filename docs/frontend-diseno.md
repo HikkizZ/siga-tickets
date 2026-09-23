@@ -1744,3 +1744,176 @@ solo uso que no quedó en ningún archivo del repo. El frontend propio de esta v
 compartida contra la BD real y, al momento de cerrar esta fase, el panel de navegador todavía tenía
 abierta la sesión paralela de la Fase E2 contra ese mismo backend — detenerlo habría cortado esa
 sesión en curso, así que se dejó como estaba para no interferir con trabajo ajeno en curso.
+
+## Fase D — cuentas de cliente en el portal (post-cierre del plan de 7 fases, en paralelo con E1/E2)
+
+Registro/login de cliente con sesión persistente en `/mesa-de-ayuda/cuenta/*`, contra
+`/publico/cuentas/*` (docs/api.md, sección "Cuentas de cliente (Fase D)"). **Aditivo**: se SUMA al
+flujo existente de seguimiento por número+correo (Fase 5, token de portal por ticket, 15 min,
+`sessionStorage`) — no lo reemplaza ni lo modifica. Backend ya completo y probado antes de esta
+fase; solo se tocó frontend.
+
+Archivos nuevos:
+
+- `src/lib/portal/cuentaToken.ts` — el token de CUENTA (JWT `scope:"portal-cuenta"`, TTL **7
+  días**) en **`localStorage`**, a propósito distinto de `src/lib/portal/token.ts` (token de portal
+  por ticket, 15 min, `sessionStorage`): acá sí es una sesión persistente de verdad, tiene que
+  sobrevivir cerrar la pestaña/el navegador. Mismos try/catch de SSR/modo privado que los otros dos
+  módulos de token del proyecto (`auth/token.ts`, `portal/token.ts`) — los tres nunca se mezclan.
+- `src/lib/api/portalCuenta.ts` — funciones de red puras contra `/publico/cuentas/*` (mismo patrón
+  que `portal.ts`, todas sobre `publicApiClient`): `registrarCuenta` (`POST /cuentas/registro`),
+  `loginCuenta` (`POST /cuentas/login`), `obtenerMisTickets` (`GET /cuentas/mis-tickets`,
+  paginado), `obtenerDetalleTicketCuenta` (`GET /cuentas/tickets/:numero`, reutiliza el tipo
+  `TicketPublico` de `portal.ts` tal cual — misma proyección, documentado en api.md, sin
+  duplicarlo) y `responderTicketCuenta` (`POST /cuentas/tickets/:numero/mensajes`, multipart, mismo
+  patrón que `responderComoClientePublico`). Mismo placeholder de captcha que `portal.ts`
+  (`"portal-sin-captcha-real"`), constante propia porque la de `portal.ts` no está exportada.
+- `src/hooks/usePortalCuenta.ts` — hooks de TanStack Query (mismo patrón que `usePortal.ts`), sin
+  invalidación cruzada con `["tickets"]`/`["ots"]` ni con `["portal", ...]` (el portal por ticket):
+  `useRegistrarCuenta`/`useLoginCuenta` (guardan el token al tener éxito, sin toast de error — el
+  409/401 se muestra inline en el formulario, mismo criterio que `useSolicitarSeguimiento` en
+  `usePortal.ts`), `useMisTickets`/`useDetalleTicketCuenta` (`retry:false`, un token vencido no se
+  arregla reintentando), `useResponderTicketCuenta` (toast de error, invalida el detalle),
+  `useLimpiarCacheCuenta`, y dos hooks propios de esta fase: `useCuentaSesion` (guard de sesión
+  reutilizado por las dos rutas protegidas — arranca en `null`, se resuelve después de montar,
+  mismo patrón anti-mismatch de hidratación que ya usa `Seguimiento` en `seguimiento.tsx`; sin
+  token después de revisar, redirige a `/mesa-de-ayuda/cuenta/login`) y `useCerrarSesionCuenta`
+  (limpia token + caché, vuelve a `/mesa-de-ayuda`).
+
+Rutas nuevas:
+
+- `/mesa-de-ayuda/cuenta/registro` — formulario (nombre, correo, contraseña 8–72, confirmar) →
+  guarda el token → navega a "mis tickets". `409` (correo ya registrado) muestra el mensaje real
+  del backend con un link a login.
+- `/mesa-de-ayuda/cuenta/login` — formulario (correo, contraseña) → mismo destino tras éxito.
+  Mensaje de error genérico real del backend, sin distinguir causa.
+- `/mesa-de-ayuda/cuenta/mis-tickets` — protegida por `useCuentaSesion`. Lista paginada (25/página,
+  mismo patrón de "Anterior/Siguiente" que `tickets.tsx`), cada fila número/asunto/estado/fecha,
+  clic navega al detalle. Botón "Cerrar sesión".
+- `/mesa-de-ayuda/cuenta/tickets/$numero` — detalle en una ruta propia (no un panel dentro de "mis
+  tickets"): mismo criterio de navegación que el resto del proyecto (una URL por pantalla, sin
+  estado de "abierto" en memoria) y permite volver a él directo con el link del correo de aviso
+  algún día. Reutiliza **tal cual** la estructura visual de la sección de detalle de
+  `seguimiento.tsx` (encabezado con estado/fecha, bloque de OT vinculada, conversación,
+  formulario de respuesta con adjuntos) — solo cambian los datos, que vienen de
+  `GET`/`POST /cuentas/tickets/:numero(/mensajes)` con el token de cuenta en vez del token de
+  portal por ticket. Sin sección de "adjuntar archivo suelto" (a diferencia de `seguimiento.tsx`):
+  el backend de Fase D no tiene un endpoint equivalente a `POST /publico/adjuntos` para cuentas —
+  confirmado contra `docs/api.md`, que solo documenta 4 endpoints de cuenta (registro, login,
+  mis-tickets, detalle+mensajes) — así que no hay nada a qué apuntar ese botón.
+
+Editados:
+
+- `src/lib/api/client.ts` — `OpcionesLlamadaPublica` gana un campo `cuentaToken?: string`, hermano
+  de `portalToken?: string` (mutuamente excluyentes: cada llamador pasa como máximo uno). Ambos se
+  mandan igual (`Authorization: Bearer <...>`), así que `ejecutarPublico`/`ejecutarFormPublico`
+  simplemente usan `portalToken ?? cuentaToken` como bearer — sin renombrar ni tocar ningún
+  llamador existente de `portalToken` (Fase 5 sigue exactamente igual).
+- `src/components/PortalLayout.tsx` — con sesión de cuenta activa (token guardado, sin validarlo
+  contra el backend: basta con que exista) se agrega el link "Mis tickets" en el header, **además
+  de** el `accion` que ya traía cada página (nunca lo reemplaza — ver decisión abajo). Mismo patrón
+  anti-mismatch de hidratación que el resto del portal: arranca sin el link, lo agrega recién en un
+  `useEffect` tras montar.
+- `src/routes/mesa-de-ayuda/seguimiento.tsx` — un único agregado: link discreto "¿Tienes una
+  cuenta? Inicia sesión para ver todos tus tickets" bajo el formulario de búsqueda, hacia
+  `/mesa-de-ayuda/cuenta/login`. El resto del archivo (búsqueda por número+correo, detalle,
+  respuesta, adjunto suelto) no se tocó.
+
+Fuera de alcance, sin tocar: `RouteGuard.tsx` (ya eximía todo `/mesa-de-ayuda*`, incluidas las
+rutas nuevas, desde la Fase 0 — confirmado, no hizo falta ningún cambio ahí), `AppShell.tsx`,
+`AuthProvider.tsx` (auth interna, mecanismo completamente distinto), `mesa-de-ayuda/index.tsx` más
+allá de heredar el link nuevo de `PortalLayout.tsx`, `src/lib/portal/token.ts`,
+`src/lib/api/portal.ts`, `src/hooks/usePortal.ts` (flujo de la Fase 5, intacto), backend.
+
+### Decisiones dentro del espacio permitido
+
+- **"Mis tickets" además de, no en vez de**: se decidió mostrar ambos links en el header
+  (`accion` + "Mis tickets") cuando hay sesión de cuenta, en vez de ocultar "Consultar un
+  ticket"/"Crear ticket". Ese link sigue siendo útil con sesión activa (p. ej. crear un ticket con
+  otro correo, o el flujo de seguimiento puntual) y ocultarlo no aportaba nada — el enunciado
+  dejaba la elección abierta ("en vez de o además de").
+- **Detalle de ticket de cuenta en ruta propia, no panel embebido**: `/mesa-de-ayuda/cuenta/tickets/$numero`
+  en vez de un panel dentro de "mis tickets", siguiendo el mismo criterio de navegación por URL que
+  ya usa el resto del proyecto (`tickets.tsx` sí usa un panel embebido para el detalle, pero es
+  parte del panel interno con su propio store de UI; el portal público no tiene ese mecanismo y no
+  se justificaba introducirlo para una sola pantalla).
+- **Sin registro/login con react-hook-form ni Zod**: se siguió el mismo estilo simple de
+  `useState` + validación manual que ya usan `mesa-de-ayuda/index.tsx` y `seguimiento.tsx` (los dos
+  formularios precedentes del portal), no el patrón con `react-hook-form`/Zod que sí usan algunos
+  formularios del panel interno — consistencia con el resto del portal, no con el panel.
+- **Captcha**: mismo placeholder fijo que ya usa `portal.ts` (`NoopCaptcha` del backend, cualquier
+  `captchaToken` no vacío), constante propia en `portalCuenta.ts` — no se importó la de
+  `portal.ts` porque no está exportada, y duplicarla es el mismo criterio de pequeña duplicación
+  por archivo que ya usan `aQueryString` en cada `src/lib/api/*.ts`.
+- **Problema de infraestructura encontrado, no introducido por esta fase**: el contenedor Docker
+  `siga-ot-frontend` (`docker-compose.yml`, perfil de desarrollo con bind mount
+  `./frontend/src:/app/src`) no puede regenerar `routeTree.gen.ts` por sí solo — el plugin de
+  TanStack Router escribe primero a un temporal dentro del contenedor
+  (`/app/.tanstack/tmp/...`) y luego intenta un `rename()` atómico hacia `/app/src/routeTree.gen.ts`,
+  que al ser un bind mount de Windows es un filesystem distinto: `EXDEV: cross-device link not
+  permitted`. No es un bug de esta fase (el mecanismo ya existía); se rodeó corriendo `npm run dev`
+  directo en el host (mismo filesystem de principio a fin) para esta verificación, que sí regeneró
+  `routeTree.gen.ts` correctamente en disco — el contenedor Docker vuelve a servir la app bien
+  porque lee el mismo archivo por el bind mount, pero seguirá sin poder regenerarlo él solo la
+  próxima vez que se agregue una ruta. Documentado acá como problema abierto de infraestructura, no
+  se tocó `docker-compose.yml` (fuera del alcance de esta fase, que es solo frontend/rutas).
+
+## Fase D — verificación
+
+`npx tsc --noEmit` limpio.
+
+Backend: los archivos de Fase D (`cuentaPortal.controller.ts`, `.service.ts`, `.validation.ts`,
+middleware `authenticatePortalCuenta`, rutas en `portal.routes.ts`) ya estaban en el repo al
+empezar esta fase ("recién commiteado"), pero el contenedor `siga-ot-backend` (Docker, `tsx watch`)
+que ya llevaba corriendo un rato no los había recogido (probablemente el file-watching de `tsx`
+sobre el bind mount de Windows no disparó; primer intento de `POST /publico/cuentas/registro` dio
+`404 Ruta no encontrada`, confirmado contra `docker logs`). Se reinició el contenedor
+(`docker restart siga-ot-backend siga-ot-worker`, sin tocar código) y el segundo intento devolvió
+`201 Created` — el bug era de proceso, no del código de esta fase ni del backend en sí.
+
+Recorrido real en navegador (backend real vía Docker, puerto 3002, BD `siga-tickets`; frontend
+`npm run dev` en el host, puerto **8084** — 8080 a 8083 ocupados por otros contenedores/servicios
+de esta máquina —, MCP de navegador), sin sesión interna en ningún momento:
+
+1. `/mesa-de-ayuda/cuenta/registro` con un correo de prueba nuevo
+   (`felipe.qa.d.20260923@cliente-test.cl`, nunca usado en fases anteriores) → `POST
+   /cuentas/registro` (201), auto-login, navegación directa a "Mis tickets" (vacío, como se
+   esperaba).
+2. "Cerrar sesión" → volvió a `/mesa-de-ayuda`. Login de nuevo con el mismo correo/contraseña
+   (`/mesa-de-ayuda/cuenta/login`) → `200`, mismo destino.
+3. **Prueba de persistencia real**: se cerró la pestaña del navegador por completo
+   (`tabs_close`) y se abrió una pestaña nueva navegando directo a
+   `/mesa-de-ayuda/cuenta/mis-tickets` (sin pasar por login) → la sesión seguía activa, "Mis
+   tickets" cargó directo. Confirma que es `localStorage`, no `sessionStorage`, el que persiste
+   acá (una pestaña nueva no comparte `sessionStorage` con la anterior, así que si el token
+   hubiera estado ahí, este paso habría fallado y redirigido a login).
+4. Ticket real creado desde `/mesa-de-ayuda` con el mismo correo de la cuenta (**TK-0008**) → sin
+   buscarlo por número, apareció solo en "Mis tickets" al recargar la lista. Abierto
+   (`/mesa-de-ayuda/cuenta/tickets/TK-0008`), respondido con un mensaje real (`POST
+   /cuentas/tickets/TK-0008/mensajes`) → apareció de inmediato en la conversación con autor "Tú".
+5. Registro con el mismo correo otra vez → `409 CONFLICT`, mensaje real del backend ("Ese correo
+   ya está registrado") mostrado inline con link a "Inicia sesión".
+6. Login con la contraseña incorrecta → `401`, "Credenciales inválidas" (mismo mensaje genérico
+   que documenta `docs/api.md`, sin distinguir causa).
+7. Flujo VIEJO sin cuenta (`/mesa-de-ayuda/seguimiento`, número+correo) probado de punta a punta
+   sobre el mismo TK-0008: encontró el ticket, mostró la conversación completa **incluido** el
+   mensaje enviado desde la cuenta en el paso 4 (mismo ticket, dos caminos de acceso) — confirma
+   que ambos flujos coexisten sin pisarse. El link discreto "¿Tienes una cuenta? Inicia sesión
+   para ver todos tus tickets" apareció bajo el formulario de búsqueda.
+8. `PortalLayout`: confirmado que "Mis tickets" aparece junto al `accion` de cada página
+   (`/mesa-de-ayuda`, `/mesa-de-ayuda/seguimiento`, `/mesa-de-ayuda/cuenta/registro`) cuando hay
+   sesión activa, y que el `accion` original (p. ej. "Consultar un ticket") se sigue mostrando
+   igual.
+9. Consola revisada en todo el recorrido (`read_console_messages`): sin `Uncaught`, sin
+   `TypeError`, sin mismatch de hidratación. Los únicos `error` vistos son los `409`/`401`
+   esperados de los pasos 5 y 6 (respuestas de red controladas, mostradas inline en la UI, no
+   errores sin manejar).
+
+Al terminar: la cuenta de prueba (`felipe.qa.d.20260923@cliente-test.cl`) y el ticket **TK-0008**
+quedaron tal cual — no hay endpoint para borrar ninguno de los dos (ni en el backend de Fase D ni
+en el resto de la API), mismo criterio que las fases anteriores con datos de prueba en
+`siga-tickets`. El frontend propio de esta verificación (puerto 8084, proceso de host) quedó
+**detenido**. Los contenedores Docker (`siga-ot-backend`, `siga-ot-worker`, `siga-ot-frontend`)
+quedaron **corriendo**: ya estaban activos antes de empezar esta fase (entorno compartido de
+desarrollo de la máquina) y solo se reiniciaron backend/worker para recoger código ya commiteado —
+detenerlos al cerrar no correspondía, no son un servidor propio de esta verificación.
