@@ -32,6 +32,7 @@ Confirmado antes de tocar nada: `npm install` limpio (414 paquetes, 0 vulnerabil
 - **Fase 0**: hecha (2026-09-22). Detalle abajo.
 - **Fase 1**: hecha (2026-09-23). Detalle abajo.
 - **Fase 2**: hecha (2026-09-23). Detalle abajo.
+- **Fase 3**: hecha (2026-09-23). Detalle abajo.
 
 ## Fase 0 — qué quedó
 
@@ -432,3 +433,218 @@ la Fase 1); queda activo en `siga-tickets` con una contraseña de un solo uso qu
 archivo del repo. Backend y frontend quedaron **detenidos** al terminar (no corriendo) — se
 verificó con un `curl` a `http://localhost:3002/health` y `http://localhost:8080/` que ninguno de
 los dos puertos respondía tras detener los procesos.
+
+## Fase 3 — qué quedó
+
+Archivos nuevos:
+
+- `src/lib/api/tickets.ts` — funciones de red puras para Tickets (mismo patrón que `ots.ts` /
+  `cotizaciones.ts`): tipos `TicketResumen` (forma de `GET /tickets`), `TicketDetalle` (con
+  `cadenaResponsables`, `mensajes`, `adjuntos`, `ots`, `eventos` embebidos tal cual documenta
+  `docs/api.md`), `MensajeTicket`, `AdjuntoTicket`, `OtEmbebidaTicket`, `EventoTicket`, y una
+  función por endpoint: `obtenerTickets`, `obtenerTicket`, `crearTicket`, `actualizarTicket`,
+  `cambiarEstadoTicket`, `tomarTicket`, `agregarMensajeTicket`, `derivarTicket`,
+  `convertirTicketAOt` (devuelve `OtDetalle`, no un ticket — "herencia completa" crea una OT),
+  `vincularOtATicket`/`desvincularOtDeTicket`, `subirAdjuntoTicket`. `TramoResponsable` y
+  `UsuarioRef` se reutilizan de `ots.ts` en vez de duplicarse (misma forma exacta, confirmado en
+  `api.md`).
+- `src/hooks/useTickets.ts` — un hook de TanStack Query por operación (`useTickets`, `useTicket`,
+  y una mutación por cada función de red de arriba), mismo criterio que `useOts.ts`. Todas las
+  mutaciones invalidan el árbol `["tickets"]`; `convertirTicketAOt`/`vincularOtATicket`/
+  `desvincularOtDeTicket` además invalidan `["ots"]` (crean o tocan el arreglo `ot.tickets`/
+  `ticket.ots` embebido cruzado). `useTomarTicket`/`useDerivarTicket`/`useConvertirTicketAOt`/
+  `useVincularOtATicket` muestran `toast.success` al terminar, igual que `useDerivarOt` en Fase 1.
+
+Editados:
+
+- `src/lib/labels.ts` — se agregó `ESTADOS_TICKET` (las 5, sin máquina de transiciones estricta a
+  diferencia de cotizaciones), `CANALES_TICKET_CREACION` (los 3 que acepta `POST /tickets`:
+  `telefono|presencial|interno`) y `puedeConvertirTickets(rol)` (`admin`/`gestion`, mismo criterio
+  que `puedeEscribirCotizaciones` pero como función propia porque protege una superficie distinta:
+  convertir/vincular/desvincular OT en un ticket).
+- `src/routes/tickets.tsx` — reescrita: reemplaza `useOTStore().tickets` (mock) por
+  `useTickets(filtros)` real, con paginación de servidor (25/página, mismo criterio que fases
+  previas) y filtros reales: `q` (debounced), `estado`, `canal`, `prioridad`, `responsable` (uuid
+  vía `useUsuarios()`), `mios=true` ("Mis asignados"), `sinAsignar=true` ("Sin asignar", filtro
+  nuevo que no existía en el mock). La fila de la bandeja usa exactamente la forma de
+  `TicketResumen` (sin adjuntos ni OT vinculadas, que el listado no trae). `ticketAbierto`/
+  `abrirTicket` del store se siguen usando solo como el id crudo del Sheet abierto (mismo patrón
+  que `otSeleccionadaId` en Fase 1), no como fuente de datos.
+- `src/routes/nuevo-ticket.tsx` — reescrita: `POST /tickets` real. `canal` ahora ofrece
+  exactamente `telefono|presencial|interno` (se quitó "Correo", que no es válido en este
+  formulario). Se quitó el campo "Responsable inicial": el ticket nace siempre sin responsable, y
+  el texto de ayuda lo explica ("Tomar" desde la bandeja o el detalle). `recepcionadoPorId` no se
+  envía (sale del token). `clienteId` opcional real vía `useClientes()`, reemplaza el campo
+  "Empresa" de texto/mock. El bloque "Adjuntos (demostración)" se quitó (ver decisión abajo).
+- `src/components/TicketDetail.tsx` — reescrito para leer `useTicket(ticketId)` en vez del mock:
+  responsable (`Sin asignar` + `Tomar`, o de solo lectura + `Derivar`), estado (`POST
+  /tickets/:id/estado`, las 5 opciones libres), prioridad (`PATCH /tickets/:id`), conversación
+  (`respuesta_cliente`/`nota_interna` vía `POST /tickets/:id/mensajes`, con adjuntos), adjuntos
+  sueltos del ticket, cadena de responsables real (`CadenaResponsablesTicket`, local al archivo,
+  reutiliza `TramoResponsable` de `ots.ts`), órdenes de trabajo (`ot.ots`, convertir/vincular/
+  desvincular con RBAC visual), SLA (`SlaBadge` de `Prioridad.tsx`, no el cálculo mock de
+  `nivelPrimeraRespuesta`) e historial de actividad (`textoEventoTicket()`, tipos de evento propios
+  de ticket). `DialogoDerivar` se sigue reutilizando de `Derivacion.tsx` (ver decisión abajo), pero
+  ahora recibe `opciones` con usuarios reales de `useUsuarios()` (ver bug corregido abajo) en vez
+  del mock — sin ellas el selector mostraba nombres inventados (Felipe Miranda, Carla Soto…) en
+  vez de vacío o de los usuarios reales, detectado y corregido durante el recorrido de prueba antes
+  de darlo por terminado.
+
+Fuera de alcance, sin tocar: `OTDetail.tsx` (sección "Tickets vinculados" sigue de solo lectura),
+`mock-data.ts` (`Ticket`/`MensajeTicket`/`Notificacion`, `ticketsIniciales`/
+`notificacionesIniciales` siguen ahí — `AppShell.tsx` y `mesa-de-ayuda/*` los siguen usando),
+`ot-store.tsx` (las funciones mock de tickets — `crearTicket`, `responderTicket`,
+`cambiarEstadoTicket`, `asignarTicket`, `cambiarPrioridadTicket`, `vincularTicketAOT`,
+`crearOTDesdeTicket`, `derivarTicket` — ya no las llama ningún componente tocado en esta fase, pero
+siguen existiendo porque `mesa-de-ayuda/index.tsx` y `mesa-de-ayuda/seguimiento.tsx` (portal mock,
+Fase 5) todavía las usan; `notificaciones`/`marcarNotificacionesLeidas` no se tocaron),
+`TicketBadges.tsx` (`CanalBadge`/`EstadoTicketBadge`/`SlaRespuestaBadge` siguen tipados al mock
+porque `mesa-de-ayuda/seguimiento.tsx` los sigue usando — `tickets.tsx`/`TicketDetail.tsx`
+construyeron su propio badge de canal local, tipado a `CanalTicket` real, en vez de tocar ese
+archivo), `/configuracion` (SLA, Fase 4), `/mesa-de-ayuda` (portal público, Fase 5), dashboard y
+buscador global (Fase 6).
+
+### Decisiones dentro del espacio permitido
+
+- **Adjuntos en "Nuevo ticket"**: se optó por la opción (a) del enunciado — se quitó el bloque de
+  adjuntos del formulario de creación manual. El ticket no existe antes del submit, y `POST
+  /adjuntos` exige un `entidadId` ya existente, así que no hay forma de subir un adjunto "en el
+  mismo paso" sin inventar un flujo nuevo; mismo criterio que "Nueva OT" en Fase 1, que tampoco
+  sube adjuntos al crear. Los adjuntos se suben después desde el detalle del ticket (al enviar un
+  mensaje, ver abajo).
+- **Adjuntar un archivo a un mensaje**: sigue el flujo exacto de `docs/api.md` — el archivo se
+  sube primero con `POST /adjuntos` (`entidadTipo=ticket`, `entidadId=<ticket>`), queda "suelto"
+  del ticket, y su id se guarda en un estado local del formulario (`adjuntosBorrador`); al enviar
+  el mensaje se pasa en `adjuntoIds` y el backend lo re-parenta al mensaje. Se permite más de un
+  adjunto por mensaje: el input de archivo tiene `multiple` y cada archivo elegido se sube en
+  paralelo (`Promise.allSettled`), mostrando un chip por cada uno ya subido antes de enviar.
+- **Adjuntos "sueltos" del ticket**: se construyó una sección simple de solo lectura (lista +
+  descarga, reutilizando `descargarAdjunto` de `ots.ts`, que es genérico y no específico de OT) —
+  el costo fue bajo porque reutiliza el mismo patrón visual que "Adjuntos" de `OTDetail.tsx`.
+- **Desvincular OT**: se agregó (`DELETE /tickets/:id/ots/:otId`), no estaba en el mock — extensión
+  barata y natural del mismo bloque de "Órdenes de trabajo", con el mismo criterio RBAC
+  (`puedeConvertirTickets`) que convertir/vincular.
+- **RBAC visual de convertir/vincular/desvincular**: `puedeConvertirTickets(rol)` en `labels.ts`
+  (`admin`/`gestion`, confirmado en `docs/api.md` sección "Permisos por fila": "nunca — solo
+  gestion/admin, sin excepción por fila"). Se implementó como función propia en vez de reutilizar
+  `puedeEscribirCotizaciones` tal cual, aunque la condición sea idéntica hoy: protegen superficies
+  distintas y podrían divergir en el futuro sin que eso sea un error de copiar/pegar.
+- **`DialogoDerivar` sin "mantener como colaborador"**: no hizo falta ninguna prop nueva —
+  `conColaborador` ya es opcional y por defecto `false` en `Derivacion.tsx` (Fase 1), así que
+  `TicketDetail.tsx` simplemente no la pasa y el checkbox queda oculto solo, igual que si se
+  hubiera agregado una prop `sinColaborador` explícita.
+- **"Convertir en OT" sin campo "responsable"**: se quitó del diálogo (el mock lo pedía); la OT
+  hereda la cadena de responsables completa del ticket, no se elige un responsable nuevo al
+  convertir (confirmado en `docs/api.md` y en el recorrido: OT-1043 heredó los dos tramos exactos
+  del ticket TK-0001, incluido el motivo de la derivación).
+- **`categoria` obligatorio en "Convertir en OT"**: se agregó al diálogo (no estaba en el mock),
+  con `CATEGORIAS_OT`/`etiquetaCategoriaOt` de `labels.ts`, por default `"soporte"`.
+  `esInterna`/`clienteId`/`areaInterna` reutilizan la misma lógica de "¿Es una solicitud interna?"
+  (`Switch`) que ya usa `nueva-ot.tsx` de Fase 1, con el mismo arreglo `areas` de `mock-data.ts`.
+- **"Vincular a OT existente"**: mismo patrón simple que `DialogoVincularCotizacion` de
+  `OTDetail.tsx` (Fase 2) — un `Input` con debounce sobre `GET /ots?q=` (reutiliza `useOts()` de
+  Fase 1 tal cual, sin cambios), filtrando en el cliente las OT ya vinculadas al ticket abierto.
+- **SLA**: se usa `SlaBadge` de `Prioridad.tsx` (ya normaliza valores reales) para `slaEstado`, y
+  `slaResolucionVenceEn`/`slaRespuestaVenceEn` del detalle real para las fechas de vencimiento —
+  no se replicó el cálculo mock de `nivelPrimeraRespuesta`/`horasPrimeraRespuesta`. Los componentes
+  mock `SlaRespuestaBadge`/`EstadoTicketBadge`/`CanalBadge` de `TicketBadges.tsx` se dejaron
+  intactos (los sigue usando el portal mock, Fase 5) y `tickets.tsx`/`TicketDetail.tsx`
+  construyeron un badge de canal local (`CanalBadgeReal`) con los mismos íconos pero tipado al
+  `CanalTicket` real — duplicar ~15 líneas fue más simple y seguro que generalizar un archivo
+  compartido con otra pantalla fuera de alcance.
+- **Bug encontrado y corregido durante el recorrido**: la primera versión de `TicketDetail.tsx` no
+  le pasaba `opciones` a `DialogoDerivar`, así que el selector de destino mostraba los nombres fijos
+  del mock (Felipe Miranda, Carla Soto…) en vez de usuarios reales o de quedar vacío por RBAC. Se
+  corrigió agregando `useUsuarios()` + el mismo filtro `activo && username !== "sistema"` que ya
+  usan `OTDetail.tsx`/`nueva-ot.tsx`, y se confirmó el fix en el recorrido (ver abajo).
+- **Límite de `GET /usuarios` (admin-only, no solo "rol mínimo admin" del filtro grueso)**: durante
+  el recorrido se confirmó que ni `tecnico` ni `gestion` pueden listar usuarios (ambos ven el
+  selector de "Derivar" vacío) — el endpoint es admin-only de verdad, no solo `>= gestion` como se
+  podría haber asumido por analogía con otras rutas. Solo `admin` ve la lista completa. Documentado
+  para que no se repita como sorpresa en la Fase 4.
+
+## Fase 3 — verificación
+
+`npx tsc --noEmit` limpio (confirmado dos veces: antes y después del fix del bug de `DialogoDerivar`).
+
+Recorrido real en navegador (backend `npm run dev` contra la BD real `siga-tickets`, frontend
+`npm run dev` puerto 8080, MCP de navegador):
+
+1. Admin desechable nuevo por variables de entorno al script `seed.ts`
+   (`SEED_ADMIN_USERNAME=qa_felipe_admin_f3`, contraseña propia de un solo uso generada con
+   `openssl rand -hex 16`, nunca impresa ni guardada en ningún archivo del repo) y, con su token,
+   dos usuarios `tecnico` (`qa_felipe_tec_f3a`, `qa_felipe_tec_f3b`, para probar derivación) y un
+   usuario `gestion` (`qa_felipe_gestion_f3`) reales vía `POST /usuarios`.
+2. Con `qa_felipe_tec_f3a`: `/nueva-ticket` → creó TK-0001 (canal `telefono`, prioridad `media`)
+   → confirmado en `/tickets` que nace `Nuevo`, `Sin asignar`, SLA `En plazo`, sin campo
+   "Responsable inicial" en el formulario.
+3. Abrió TK-0001 y usó "Tomar" (`POST /tickets/:id/tomar`, sin body) → responsable pasó a
+   `qa_felipe_tec_f3a`, la cadena de responsables mostró el primer tramo (`actual: true`,
+   `motivoEntrada: null`), y apareció el botón "Derivar".
+4. Cambió prioridad `Media → Alta` (`PATCH /tickets/:id`) → el badge del encabezado, "Vencimiento
+   SLA" (`02-oct` → `25-sept, 02:00 p. m.`) y "Primera respuesta · vence" se recalcularon en
+   pantalla, confirmando que el backend recalcula ambos SLA al cambiar prioridad. Cambió estado
+   `Nuevo → Abierto` (`POST /tickets/:id/estado`) → reflejado en el encabezado y en el historial.
+5. Adjunto real: el selector de archivo nativo no se puede automatizar desde el MCP de navegador
+   (mismo límite que la Fase 1), así que se subió con `curl -F` (`POST /adjuntos`,
+   `entidadTipo=ticket`, `entidadId=<TK-0001>`) para obtener un adjunto "suelto", y se envió el
+   mensaje con `adjuntoIds=[...]` también por `curl` contra `POST /tickets/:id/mensajes` (mismo
+   camino que documenta `api.md`) para simular exactamente lo que hace el botón "Adjuntar" +
+   "Enviar respuesta" del panel. Al recargar el detalle en el navegador, el mensaje
+   `respuesta_cliente` apareció con el chip `foto-equipo.txt` clicable, y al hacer clic disparó
+   `GET /adjuntos/:id/descargar` → `200`, confirmando la descarga autenticada.
+6. Desde el navegador (sin `curl`): se escribió y envió una nota interna real (`POST
+   /tickets/:id/mensajes`, `tipo: nota_interna`) → apareció distinguida visualmente (fondo amarillo,
+   badge "Interna") junto al mensaje `respuesta_cliente` anterior (fondo blanco, sin badge), en
+   orden cronológico.
+7. Se encontró y corrigió el bug de `DialogoDerivar` sin `opciones` reales (ver arriba) antes de
+   continuar. Confirmado el fix: con `qa_felipe_tec_f3a` el selector de "Derivar" quedó vacío
+   ("Selecciona una persona", sin nombres inventados) porque `GET /usuarios` es admin-only.
+8. Con `qa_felipe_admin_f3` (para tener el selector de personas poblado): derivó TK-0001 a
+   `qa_felipe_tec_f3b` con un motivo real (`POST /tickets/:id/derivar`) → toast "Ticket derivado
+   correctamente.", cadena de responsables con los dos tramos (duración y motivo correctos),
+   responsable actual actualizado.
+9. Casos de error reales confirmados contra el backend: `POST /tickets/:id/tomar` sobre TK-0001 (ya
+   con responsable) → `409 TICKET_YA_ASIGNADO` ("El ticket ya tiene responsable"); `POST
+   /tickets/:id/derivar` con `qa_felipe_tec_f3a` (ya no es el responsable actual) → `403
+   PERMISO_DENEGADO` ("Solo el responsable actual, gestión o admin pueden derivar el ticket"). Se
+   confirmaron contra la API directamente porque la UI ya evita naturalmente disparar el 409 (el
+   botón "Tomar" desaparece en cuanto hay responsable) y el 403 de derivar (el selector de destino
+   queda vacío para un `tecnico` sin `GET /usuarios`, así que el formulario ni se puede enviar) —
+   la ruta de manejo de error (`toast.error(mensajeError(error))`) es la misma ya verificada
+   visualmente con los `toast.success` de "Tomar"/"Derivar"/"Convertir"/"Vincular".
+10. Con `qa_felipe_admin_f3`: "Convertir en OT" sobre TK-0001 (categoría `Soporte`, prioridad
+    heredada `Alta`, interna con área "Bodega" por defecto al no tener cliente el ticket) →
+    `POST /tickets/:id/convertir-a-ot` (201) → toast "Ticket convertido en OT.", OT-1043 apareció
+    en "Órdenes de trabajo" con badge "Origen". Se abrió OT-1043 en `/todas-las-ot` y se confirmó
+    que heredó los dos tramos completos de la cadena de responsables (con motivo de derivación),
+    `recepcionadoPor` = quien tomó el ticket originalmente (no quien convirtió), origen "Llamada
+    telefónica" (derivado del canal `telefono` del ticket, no editable).
+11. Con `qa_felipe_admin_f3`, en el mismo TK-0001: "Vincular a OT existente" → buscó y vinculó
+    OT-1041 (`POST /tickets/:id/ots`, sin herencia) → toast "OT vinculada correctamente.", apareció
+    sin badge "Origen". Luego "Desvincular" sobre OT-1041 (`DELETE /tickets/:id/ots/:otId`) → quedó
+    solo OT-1043. Ambos eventos (`vinculado_ot`/`ot_desvinculada`) confirmados en el historial de
+    actividad con el texto correcto.
+12. RBAC visual confirmado en ambas direcciones: con `qa_felipe_tec_f3a` (técnico) la sección
+    "Órdenes de trabajo" mostró el texto "Solo gestión o administración pueden convertir o vincular
+    órdenes de trabajo." sin los tres botones; con `qa_felipe_admin_f3` y `qa_felipe_gestion_f3`
+    los tres controles estuvieron visibles y habilitados.
+13. Historial de actividad revisado de punta a punta para TK-0001: `creado`, `tomado`,
+    `prioridad_cambiada`, `estado_cambiado`, `adjunto_agregado`, `respuesta_cliente`,
+    `nota_interna`, `derivado`, `vinculado_ot` (×2, uno marcado "(conversión)"),
+    `ot_desvinculada` — los 10 tipos de evento de ticket documentados en `api.md` se vieron en
+    algún punto del recorrido, cada uno con el texto y el ícono esperado.
+14. Consola del navegador revisada con `read_console_messages`: sin `TypeError` ni `Uncaught` en
+    ningún punto del recorrido; los únicos `error` registrados son los HTTP no-2xx esperados (403
+    de RBAC en `GET /usuarios` para `tecnico`/`gestion`, 409 y 403 del paso 9, 429 de un límite de
+    intentos de login alcanzado durante las pruebas de RBAC que se resolvió reiniciando el backend
+    en desarrollo para limpiar el limitador en memoria — sin tocar código).
+
+Al terminar: `qa_felipe_tec_f3a`, `qa_felipe_tec_f3b` y `qa_felipe_gestion_f3` quedaron
+desactivados (`PATCH /usuarios/:id {activo:false}`, los tres `200`). El admin de prueba
+`qa_felipe_admin_f3` **no** se pudo desactivar a sí mismo (`409 CONFLICT`, mismo bloqueo ya
+documentado desde la Fase 0); queda activo en `siga-tickets` con una contraseña de un solo uso que
+no quedó en ningún archivo del repo ni de logs (se roto una vez a mitad del recorrido, por la misma
+razón: nunca queda escrita, solo se usa al momento). Backend y frontend quedaron **detenidos** al
+terminar — confirmado con `curl` a `http://localhost:3002/health` y `http://localhost:8080/` (ambos
+sin respuesta, puertos verificados libres con `netstat`).

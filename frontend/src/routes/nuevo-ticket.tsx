@@ -1,21 +1,17 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { Inbox, Paperclip, Plus, X } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  CANALES_TICKET,
-  clientes,
-  getUsuario,
-  usuarioActual,
-  usuarios,
-  type CanalTicket,
-  type Prioridad,
-} from "@/lib/mock-data";
+import { CANALES_TICKET_CREACION, PRIORIDADES, etiquetaCanalTicket, etiquetaPrioridad, type Prioridad } from "@/lib/labels";
+import type { CanalTicketCreacion } from "@/lib/api/tickets";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import { useClientes } from "@/hooks/useClientes";
+import { useCrearTicket } from "@/hooks/useTickets";
 import { useOTStore } from "@/lib/ot-store";
 
 export const Route = createFileRoute("/nuevo-ticket")({
@@ -25,7 +21,7 @@ export const Route = createFileRoute("/nuevo-ticket")({
       {
         name: "description",
         content:
-          "Registra manualmente un ticket recibido por teléfono, correo, de forma presencial o interna, con solicitante, canal, prioridad y responsable.",
+          "Registra manualmente un ticket recibido por teléfono, de forma presencial o interna, con solicitante, canal y prioridad.",
       },
       { property: "og:title", content: "Nuevo ticket · Mesa de ayuda · Taller OT" },
       {
@@ -38,9 +34,6 @@ export const Route = createFileRoute("/nuevo-ticket")({
   }),
   component: NuevoTicket,
 });
-
-const CANALES_MANUALES = CANALES_TICKET.filter((c) => c !== "Portal");
-const ADJUNTOS_DEMO = ["foto-equipo.jpg", "cotizacion-referencia.pdf", "acta-visita.pdf"];
 
 function Seccion({ titulo, children }: { titulo: string; children: React.ReactNode }) {
   return (
@@ -70,21 +63,45 @@ function Campo({
 }
 
 function NuevoTicket() {
-  const { crearTicket, abrirTicket } = useOTStore();
+  const { usuario } = useAuth();
+  const { abrirTicket } = useOTStore();
+  const { data: clientes } = useClientes();
+  const crearTicket = useCrearTicket();
   const navigate = useNavigate();
 
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
   const [telefono, setTelefono] = useState("");
-  const [empresa, setEmpresa] = useState("");
+  const [clienteId, setClienteId] = useState("");
   const [asunto, setAsunto] = useState("");
   const [descripcion, setDescripcion] = useState("");
-  const [canal, setCanal] = useState<CanalTicket>("Teléfono");
-  const [prioridad, setPrioridad] = useState<Prioridad>("Media");
-  const [responsable, setResponsable] = useState(usuarioActual.id);
-  const [adjuntos, setAdjuntos] = useState<string[]>([]);
+  const [canal, setCanal] = useState<CanalTicketCreacion>("telefono");
+  const [prioridad, setPrioridad] = useState<Prioridad>("media");
+  const [guardando, setGuardando] = useState(false);
 
   const listo = nombre.trim() !== "" && email.trim() !== "" && asunto.trim() !== "" && descripcion.trim() !== "";
+
+  const alGuardar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!listo) return;
+    setGuardando(true);
+    try {
+      const ticket = await crearTicket.mutateAsync({
+        asunto: asunto.trim(),
+        descripcion: descripcion.trim(),
+        solicitanteNombre: nombre.trim(),
+        solicitanteEmail: email.trim(),
+        ...(telefono.trim() ? { solicitanteTelefono: telefono.trim() } : {}),
+        ...(clienteId ? { clienteId } : {}),
+        canal,
+        prioridad,
+      });
+      abrirTicket(ticket.id);
+      navigate({ to: "/tickets" });
+    } finally {
+      setGuardando(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-[1200px] p-4 sm:p-6">
@@ -92,31 +109,11 @@ function NuevoTicket() {
         <Inbox className="size-5 text-primary" /> Nuevo ticket
       </h1>
       <p className="mt-0.5 text-sm text-muted-foreground">
-        Registra una solicitud recibida por teléfono, correo, de forma presencial o desde otra área. Entra
-        como “Nuevo” y el SLA de primera respuesta empieza a contar desde ahora.
+        Registra una solicitud recibida por teléfono, de forma presencial o desde otra área. Entra como
+        “Nuevo” y sin responsable: cualquiera lo puede tomar después desde la bandeja o el detalle.
       </p>
 
-      <form
-        className="mt-5 space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!listo) return;
-          const id = crearTicket({
-            asunto: asunto.trim(),
-            descripcion: descripcion.trim(),
-            solicitanteNombre: nombre.trim(),
-            solicitanteEmail: email.trim(),
-            ...(telefono.trim() ? { solicitanteTelefono: telefono.trim() } : {}),
-            ...(empresa ? { empresa } : {}),
-            prioridad,
-            canal,
-            adjuntos,
-            responsableId: responsable,
-          });
-          abrirTicket(id);
-          navigate({ to: "/tickets" });
-        }}
-      >
+      <form className="mt-5 space-y-4" onSubmit={alGuardar}>
         <Seccion titulo="Solicitante">
           <Campo etiqueta="Nombre">
             <Input
@@ -143,17 +140,17 @@ function NuevoTicket() {
               className="h-10"
             />
           </Campo>
-          <Campo etiqueta="Empresa (opcional)">
-            <Select value={empresa} onValueChange={setEmpresa}>
+          <Campo etiqueta="Cliente (opcional)">
+            <Select value={clienteId} onValueChange={setClienteId}>
               <SelectTrigger className="h-10 text-sm">
-                <span className={empresa ? "" : "text-muted-foreground"}>
-                  {empresa || "Selecciona una empresa"}
+                <span className={clienteId ? "" : "text-muted-foreground"}>
+                  {clientes?.find((c) => c.id === clienteId)?.nombre ?? "Selecciona un cliente"}
                 </span>
               </SelectTrigger>
               <SelectContent>
-                {clientes.map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {c}
+                {(clientes ?? []).map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.nombre}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -179,14 +176,14 @@ function NuevoTicket() {
             />
           </Campo>
           <Campo etiqueta="Canal">
-            <Select value={canal} onValueChange={(v) => setCanal(v as CanalTicket)}>
+            <Select value={canal} onValueChange={(v) => setCanal(v as CanalTicketCreacion)}>
               <SelectTrigger className="h-10 text-sm">
-                <span>{canal}</span>
+                <span>{etiquetaCanalTicket(canal)}</span>
               </SelectTrigger>
               <SelectContent>
-                {CANALES_MANUALES.map((c) => (
+                {CANALES_TICKET_CREACION.map((c) => (
                   <SelectItem key={c} value={c}>
-                    {c}
+                    {etiquetaCanalTicket(c)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -195,78 +192,32 @@ function NuevoTicket() {
           <Campo etiqueta="Prioridad">
             <Select value={prioridad} onValueChange={(v) => setPrioridad(v as Prioridad)}>
               <SelectTrigger className="h-10 text-sm">
-                <span>{prioridad}</span>
+                <span>{etiquetaPrioridad(prioridad)}</span>
               </SelectTrigger>
               <SelectContent>
-                {(["Alta", "Media", "Baja"] as Prioridad[]).map((p) => (
+                {PRIORIDADES.map((p) => (
                   <SelectItem key={p} value={p}>
-                    {p}
+                    {etiquetaPrioridad(p)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </Campo>
-          <Campo etiqueta="Adjuntos (demostración)" ancho>
-            <div className="flex flex-wrap items-center gap-2">
-              {adjuntos.map((a) => (
-                <span
-                  key={a}
-                  className="inline-flex items-center gap-1.5 rounded border border-border bg-muted px-2 py-1 text-[11px] text-muted-foreground"
-                >
-                  <Paperclip className="size-3" />
-                  {a}
-                  <button
-                    type="button"
-                    onClick={() => setAdjuntos((prev) => prev.filter((x) => x !== a))}
-                    aria-label={`Quitar ${a}`}
-                  >
-                    <X className="size-3" />
-                  </button>
-                </span>
-              ))}
-              {ADJUNTOS_DEMO.filter((a) => !adjuntos.includes(a)).map((a) => (
-                <Button
-                  key={a}
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8 text-[11px]"
-                  onClick={() => setAdjuntos((prev) => [...prev, a])}
-                >
-                  <Plus className="size-3" /> {a}
-                </Button>
-              ))}
-            </div>
           </Campo>
         </Seccion>
 
-        <Seccion titulo="Recepción y responsable">
+        <Seccion titulo="Recepción">
           <Campo etiqueta="Recepcionado por">
-            <Input value={`${usuarioActual.nombre} · ${usuarioActual.rol}`} readOnly className="h-10" />
-          </Campo>
-          <Campo etiqueta="Responsable inicial">
-            <Select value={responsable} onValueChange={setResponsable}>
-              <SelectTrigger className="h-10 text-sm">
-                <span>{getUsuario(responsable).nombre}</span>
-              </SelectTrigger>
-              <SelectContent>
-                {usuarios.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.nombre} · {u.rol}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Input value={usuario ? `${usuario.nombre} · ${usuario.rol}` : ""} readOnly className="h-10" />
           </Campo>
           <p className="text-[11px] text-muted-foreground sm:col-span-2">
-            “Recepcionado por” queda fijo con tu usuario. El responsable se puede cambiar después con
-            “Derivar” desde el detalle del ticket.
+            El ticket nace sin responsable asignado (nadie lo toma automáticamente, ni siquiera quien lo
+            registra); cualquier técnico lo puede tomar después con “Tomar” desde la bandeja o el detalle.
           </p>
         </Seccion>
 
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" className="h-10" disabled={!listo}>
-            Crear ticket
+          <Button type="submit" className="h-10" disabled={!listo || guardando}>
+            {guardando ? "Creando…" : "Crear ticket"}
           </Button>
           <Button type="button" variant="outline" className="h-10" onClick={() => navigate({ to: "/tickets" })}>
             Cancelar

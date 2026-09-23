@@ -103,12 +103,18 @@ export const etiquetaEstadoTicket = crearTraductor<EstadoTicket>(
   },
   "EstadoTicket",
 );
+// Fase 3: sin máquina de transiciones estricta (docs/api.md, POST /tickets/:id/estado) — las 5
+// se muestran siempre, a diferencia de cotizaciones.
+export const ESTADOS_TICKET: readonly EstadoTicket[] = ["nuevo", "abierto", "esperando_cliente", "resuelto", "cerrado"];
 
 export type CanalTicket = "portal" | "correo" | "telefono" | "presencial" | "interno";
 export const etiquetaCanalTicket = crearTraductor<CanalTicket>(
   { portal: "Portal", correo: "Correo", telefono: "Teléfono", presencial: "Presencial", interno: "Interno" },
   "CanalTicket",
 );
+// Canales que acepta la creación manual de un ticket (docs/api.md, POST /tickets): portal/correo
+// son de fases futuras (portal público e ingesta de correo), nunca de este formulario.
+export const CANALES_TICKET_CREACION: readonly CanalTicket[] = ["telefono", "presencial", "interno"];
 
 // ---- Cotizaciones ----
 
@@ -142,5 +148,13 @@ export const etiquetaRol = crearTraductor<Rol>(
 // Cotizaciones (Fase 2): a diferencia de OT, escribir (crear, editar, cambiar estado, vincular)
 // es exclusivo de gestion/admin, sin excepción por fila (docs/api.md, sección "Cotizaciones").
 export function puedeEscribirCotizaciones(rol: Rol): boolean {
+  return rol === "admin" || rol === "gestion";
+}
+
+// Tickets (Fase 3): convertir a OT, vincular y desvincular una OT existente son exclusivos de
+// gestion/admin, "sin excepción por fila" (docs/api.md, sección "Permisos por fila") — mismo
+// criterio que puedeEscribirCotizaciones, pero se deja como función propia porque protege una
+// superficie distinta (no cotizaciones).
+export function puedeConvertirTickets(rol: Rol): boolean {
   return rol === "admin" || rol === "gestion";
 }
