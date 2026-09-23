@@ -35,6 +35,7 @@ Confirmado antes de tocar nada: `npm install` limpio (414 paquetes, 0 vulnerabil
 - **Fase 3**: hecha (2026-09-23). Detalle abajo.
 - **Fase 4**: hecha (2026-09-23). Detalle abajo.
 - **Fase 5**: hecha (2026-09-23). Detalle abajo.
+- **Fase 6**: hecha (2026-09-23). Última fase del plan — detalle abajo, con nota de cierre al final del documento.
 
 ## Fase 0 — qué quedó
 
@@ -1022,3 +1023,215 @@ el archivo temporal vivía fuera del repo, en la carpeta de scratchpad de la ses
 terminar). Backend y frontend quedaron **detenidos** al terminar — confirmado con `curl` a
 `http://localhost:3002/health` y `http://localhost:8080/` (ambos sin respuesta) tras detener el
 proceso real del backend por su PID (`Get-NetTCPConnection -LocalPort 3002`, `taskkill /T /F`).
+
+## Fase 6 — qué quedó
+
+Dashboard (`/dashboard`) y buscador global (`BuscadorGlobal()` en `AppShell.tsx`) contra
+`GET /dashboard` y `GET /buscar` (`docs/api.md`, sección "Dashboard y búsqueda global (Fase 7)"),
+reemplazando el 100% mock que traían ambas piezas (`useOTStore().ots/cotizaciones/sla/tickets/
+slaRespuesta` en el dashboard; filtrado local de `ots`/`tickets`/`cotizaciones` del store en el
+buscador). Última fase del plan — ver la nota de cierre al final de este documento.
+
+Archivos nuevos:
+
+- `src/lib/api/dashboard.ts` — funciones de red puras (mismo patrón que `sla.ts`): tipo `Dashboard`
+  con los 10 campos exactos del contrato (comentado en el propio tipo cuáles son "foto actual" y
+  cuáles "filtrado", para que quien lo use después no tenga que volver a `api.md`), `DashboardFiltros`
+  (`desde`/`hasta` opcionales) y `obtenerDashboard(filtros)`.
+- `src/hooks/useDashboard.ts` — `useDashboard(filtros)`, un único `useQuery` (sin mutaciones).
+  `retry: false`: un `hasta` anterior a `desde` devuelve `400 VALIDATION_ERROR` real, que no se
+  arregla reintentando (mismo criterio que `useTicketPublico` de la Fase 5 para su propio 401).
+- `src/lib/api/buscar.ts` — funciones de red puras: tipos `ResultadoBusquedaOt`/`Ticket`/
+  `Cotizacion`/`Cliente` (la forma reducida exacta de cada rama, sin reutilizar los tipos de
+  `ots.ts`/`tickets.ts`/`cotizaciones.ts` — el DTO de búsqueda trae menos campos que el DTO de
+  listado de cada dominio, así que son tipos propios) y `buscar(q)`.
+- `src/hooks/useBuscar.ts` — `useBuscar(q)`, `enabled` exige `estaAutenticado` y al menos 2
+  caracteres (mismo umbral que ya usaba el buscador mock).
+
+Editados:
+
+- `src/routes/dashboard.tsx` — reescrita: reemplaza el cálculo 100% local sobre el store mock por
+  `useDashboard({desde,hasta})` real. Mismo layout visual que el mock (6 KPIs arriba, 4 paneles de
+  gráficos `recharts` abajo, mismos `Kpi`/`Panel`/`useColores()` locales al archivo, sin rediseño).
+  Los 6 KPIs del mock mapean 1 a 1 con los 6 campos numéricos reales (`otActivas`,
+  `otConSlaVencido`, `montoCotizacionesAprobadas`, `tiempoMedioResolucionDias`,
+  `ticketsSinResponderFueraDeSla`, `tiempoMedioPrimeraRespuestaHoras`) y los 4 paneles con los 4
+  campos de arreglo (`otPorEstado`, `otPorCliente` top 10, `otPorResponsable`,
+  `cotizacionesPorEstado`) — ningún KPI ni gráfico del mock quedó sin equivalente real, y no se
+  agregó ninguno nuevo. `Kpi`/`Panel` ganaron una prop `fotoActual` opcional que agrega un texto
+  italic ("Valor actual — no cambia con el rango de fechas.") o una píldora "Foto actual" junto al
+  título, aplicada exactamente a los 6 campos que `api.md` marca como foto actual
+  (`otActivas`, `otConSlaVencido`, `otPorEstado`, `otPorCliente`, `otPorResponsable`,
+  `ticketsSinResponderFueraDeSla`) — los 4 filtrados no la llevan. `tiempoMedioResolucionDias`/
+  `tiempoMedioPrimeraRespuestaHoras` en `null` muestran "Sin datos" en vez de `NaN`/`0.0`. Un
+  `hasta` anterior a `desde` se maneja con un banner inline (`No se pudo cargar el dashboard: <mensaje
+  real del backend>`), que reemplaza los KPIs/gráficos mientras dura el error, en vez de dejarlos
+  con datos viejos engañosos.
+- `src/components/AppShell.tsx` — `BuscadorGlobal()`: reemplaza el filtrado local (`ots`/`tickets`/
+  `cotizaciones` del store, sin `clientes`) por `useBuscar(qDebounced)` real, con `useDebounced`
+  (300 ms, mismo criterio que el resto de la app desde la Fase 1) sobre el texto antes de pegarle a
+  `GET /buscar`. Los 4 grupos reales se muestran en el mismo orden que ya usaba el mock (Órdenes de
+  trabajo, Tickets, Cotizaciones) más el grupo nuevo "Clientes" al final. Clic: OT → `abrirOT(id)`
+  (igual que antes); Ticket → `abrirTicket(id)` + `navigate({to:"/tickets"})` (igual que antes);
+  Cotización → `navigate({to:"/cotizaciones"})` (igual que antes, ver decisión abajo); Cliente → sin
+  acción de clic (ver decisión abajo). Mientras `qDebounced` todavía no alcanza al texto ya tecleado
+  (o la query está en curso) se muestra "Buscando…" en vez de "Sin resultados" para no mentir
+  brevemente en cada tecla. Solo esta función se tocó del archivo — el resto de `AppShell.tsx`
+  (`Notificaciones`, `ResumenInicio`, `MenuPerfil`, `SidebarContenido`, etc.) queda exactamente
+  igual que en fases anteriores.
+
+Fuera de alcance, sin tocar: `RouteGuard.tsx`, `apiClient`/`publicApiClient`, cualquier pantalla
+fuera de `dashboard.tsx` y `BuscadorGlobal()`, `mock-data.ts`/`ot-store.tsx` (ver el chequeo final
+de `useOTStore` más abajo — ninguno de los dos se tocó ni se borró).
+
+### Decisiones dentro del espacio permitido
+
+- **KPI "Resolución promedio"**: cambia de significado respecto al mock, documentado en el
+  enunciado como esperable. El mock calculaba `fechaEstimada - fechaIngreso` (una estimación, ni
+  siquiera la fecha real de cierre — un defecto del mock, no una elección de diseño). El campo real
+  (`tiempoMedioResolucionDias`) es `terminadoEn - fechaIngreso` sobre OT realmente terminadas en el
+  período: la fecha de cierre real, no una estimación. El detalle del KPI se reescribió a "OT
+  terminadas en el período: desde ingreso hasta el cierre real" para no seguir insinuando que mide
+  una estimación.
+- **Indicador visual de "foto actual"**: se implementó en dos niveles — una línea italic bajo el
+  detalle de cada KPI afectado, y una píldora "Foto actual" junto al título de cada panel de
+  gráfico afectado (`Panel` ganó la prop, `Kpi` también). Se prefirió repetir el aviso en cada
+  tarjeta/panel en vez de un único texto general arriba del todo: el usuario que cambia el rango de
+  fechas y ve que "OT activas" no se mueve necesita el aviso pegado a esa tarjeta en el momento, no
+  un texto que ya scrolleó fuera de vista.
+- **Error `hasta < desde`**: se optó por un banner inline (no un toast) porque el dashboard es una
+  vista de solo lectura sin otras acciones en curso — un banner fijo bajo los filtros de fecha,
+  visible mientras el error persiste, comunica mejor "esto no cargó" que un toast que desaparece
+  solo, y evita mostrar KPIs/gráficos con el estado anterior (potencialmente de otro rango) mientras
+  el usuario no corrige la fecha.
+- **Buscador — clic en "Cotización"**: se revisó `cotizaciones.tsx` (Fase 2) y su diálogo de
+  detalle (`DialogoDetalleCotizacion`) solo se abre con un `id` guardado en un `useState` local al
+  componente de la ruta (`detalleId`) — no hay query param, hash ni campo del store que permita
+  abrirlo desde afuera sin agregar un mecanismo nuevo (que el enunciado no pide para esto). Se
+  navega a `/cotizaciones` sin abrir el detalle, igual que ya hacía el buscador mock.
+- **Buscador — clic en "Cliente"**: se confirmó (grep sobre `src/routes/`) que no existe ninguna
+  pantalla de detalle de cliente en la app — `clientes` solo se usa como selector (`useClientes()`)
+  en formularios y filtros, nunca como una ruta propia. Se optó por la opción más simple del
+  enunciado: mostrar el resultado (nombre del cliente) sin acción de clic, en vez de inventar una
+  navegación a `/cotizaciones`/`/todas-las-ot` "filtrado por cliente" que habría exigido además
+  sincronizar el filtro de esa pantalla desde afuera (ninguna de las dos expone hoy un mecanismo
+  para eso, mismo problema que el punto anterior). La fila se renderiza como texto plano (sin
+  `<button>`, sin estado hover) para que visualmente no invite a hacer clic.
+- **`useBuscar`/`useDashboard` sin invalidación cruzada**: ninguno de los dos hooks invalida ni es
+  invalidado por otras claves de TanStack Query — son vistas agregadas de solo lectura, no hay
+  ninguna mutación en esta fase que deba refrescarlos, y forzar un refetch de `/dashboard` o
+  `/buscar` desde mutaciones de otros dominios (crear una OT, cambiar un estado, etc.) habría sido
+  invalidar por especulación, no por una necesidad observada.
+
+## Fase 6 — verificación
+
+`npx tsc --noEmit` limpio.
+
+Recorrido real en navegador (backend `npm run dev` contra la BD real `siga-tickets`, frontend
+`npm run dev` puerto 8080, MCP de navegador):
+
+1. Admin desechable: se generaron tres cuentas en esta fase por errores de tooling al extraer el
+   token de red (rutas `/tmp` de Git Bash no resueltas por Node nativo de Windows) —
+   `qa_felipe_admin_f6` y `qa_felipe_admin_f6b` quedaron creadas pero sin usarse (sus contraseñas de
+   un solo uso se generaron, se usaron una vez para el intento de login fallido por el bug de
+   tooling, y se descartaron sin quedar en ningún archivo ni en la salida de ningún comando). La
+   cuenta efectivamente usada fue `qa_felipe_admin_f6c` (`SEED_ADMIN_USERNAME=qa_felipe_admin_f6c`,
+   contraseña de un solo uso generada con `openssl rand -hex 16`, usada solo para
+   `POST /auth/login` por API y nunca impresa ni guardada). Para el recorrido en el navegador, en
+   vez de escribir esa contraseña en el formulario de `/login` (que no es parte del alcance de esta
+   fase), se inyectó directamente el JWT ya obtenido por ese login de API en
+   `localStorage["siga-ot:token"]` — la misma clave que usa `src/lib/auth/token.ts` — y se navegó a
+   `/dashboard`; `AuthProvider` lo validó contra `GET /auth/me` con normalidad. Decisión tomada para
+   no manejar ninguna contraseña en texto plano dentro del navegador, dado que `login.tsx` no forma
+   parte de esta fase.
+2. `/dashboard` sin filtro: los 10 valores cargaron reales y no en cero (`otActivas: 3`,
+   `otConSlaVencido: 0`, `montoCotizacionesAprobadas: $750.000`, `tiempoMedioResolucionDias: "Sin
+   datos"` — sin OT terminadas todavía en la BD de prueba, `ticketsSinResponderFueraDeSla: 0`,
+   `tiempoMedioPrimeraRespuestaHoras: "0.0 h"`), confirmados contra un `curl` directo a
+   `GET /dashboard` con el mismo token (mismo JSON exacto). `otPorEstado` mostró las 6 barras (2
+   `Ingresado`, 1 `En ejecución`, resto en 0), `otPorCliente` 2 clientes (`Constructora Vertiz`,
+   `Minera Los Andes`), `otPorResponsable` 2 responsables, `cotizacionesPorEstado` con 1 `Borrador`
+   ($425.000) y 1 `Aprobada` ($750.000) — todo dato real dejado por las Fases 1-3, ninguno mock.
+3. Rango de fechas futuro (`2027-01-01` a `2027-01-31`, sin ninguna cotización real en ese rango):
+   los campos **filtrados** cambiaron (`montoCotizacionesAprobadas` de `$750.000` a `$0`,
+   `cotizacionesPorEstado` las 4 filas a `0 · $0`, `tiempoMedioPrimeraRespuestaHoras` de `0.0 h` a
+   "Sin datos"), mientras los campos **foto actual** se mantuvieron exactamente iguales
+   (`otActivas: 3`, `otConSlaVencido: 0`, `ticketsSinResponderFueraDeSla: 0`, y los tres gráficos
+   `otPorEstado`/`otPorCliente`/`otPorResponsable` con las mismas barras) — confirmado también por
+   `curl` directo contra el mismo rango antes de probarlo en pantalla.
+4. `hasta` (`2026-09-01`) anterior a `desde` (`2026-09-20`): el banner inline mostró "No se pudo
+   cargar el dashboard: Datos inválidos" (el `message` real del `400 VALIDATION_ERROR` del backend),
+   y los KPIs/gráficos desaparecieron en vez de quedar con el rango anterior — confirmado también
+   por `curl` directo (mismo `code`/`message`).
+5. Buscador global: `OT-1041` → grupo "Órdenes de trabajo" con `OT-1041 · Mantención preventiva de
+   UPS - QA Fase 1 · En ejecución`; clic → abrió el Sheet real de detalle de OT-1041 (cliente,
+   responsable, cadena de responsables, SLA reales, misma pantalla que ya prueban las fases 1-4).
+   `TK-0001` → grupo "Tickets" con `TK-0001 · No enciende el equipo (QA Fase 3) · Abierto`; clic →
+   navegó a `/tickets` y abrió el detalle real de TK-0001 (cadena de responsables, primera
+   respuesta, SLA, órdenes de trabajo vinculadas). `COT-2041` → grupo "Cotizaciones" con
+   `COT-2041 · Aprobada · $750.000`; clic → navegó a `/cotizaciones` (tabla real, sin abrir el
+   diálogo de detalle, ver decisión arriba). `Minera` → grupo "Clientes" con `Minera Los Andes`,
+   renderizado sin botón ni hover (sin acción de clic, ver decisión arriba).
+6. Caso sin resultados: `zzznoexiste` → "Sin resultados para "zzznoexiste"." en vez de un panel
+   vacío sin explicación.
+7. Consola del navegador (`read_console_messages`, solo errores) revisada dos veces durante el
+   recorrido: el único `error` en ambas lecturas fue el `400` esperado del paso 4 (`hasta` antes de
+   `desde`); sin `TypeError` ni `Uncaught` en ningún punto.
+8. **Chequeo final de cierre de fases** (`grep -rn "useOTStore" src/routes src/components`): de los
+   20 usos encontrados, **todos** son `abrirOT`/`abrirTicket`/`otSeleccionadaId`/`ticketAbierto`
+   (navegación, legítimos) **excepto dos**, ambos ya documentados como fuera de alcance en fases
+   anteriores y sin relación con esta fase:
+   - `src/routes/linea-de-tiempo.tsx:82` — `const { ots, sla } = useOTStore();`: la línea de tiempo
+     sigue 100% en mock, decisión explícita de la Fase 1 (`GET /ots/kanban` no trae `fechaIngreso`,
+     conectarla de verdad exigía N+1 o un campo nuevo del backend — ver Fase 1 arriba).
+   - `src/components/AppShell.tsx:198` — `const { ots, sla } = useOTStore();`: el badge "N con SLA
+     vencido" del menú lateral (`SidebarContenido`) sigue sobre `nivelSla(ot, sla)` del store mock,
+     decisión explícita de la Fase 4 (arriba).
+   Ninguna pantalla de negocio nueva quedó dependiendo del store mock por esta fase — los dos
+   hallazgos ya existían antes de empezar la Fase 6 y no estaban en su alcance escrito (solo
+   `dashboard.tsx` y `BuscadorGlobal()`). `mock-data.ts`/`ot-store.tsx` en sí no se tocaron ni se
+   borraron, tal como pide el enunciado.
+
+Al terminar: `qa_felipe_admin_f6` y `qa_felipe_admin_f6b` (las dos cuentas generadas por el problema
+de tooling del paso 1, nunca usadas para nada más que ese intento de login) quedaron desactivadas
+(`PATCH /usuarios/:id {activo:false}`, ambas `200`, usando el token de `qa_felipe_admin_f6c`). El
+admin efectivamente usado, `qa_felipe_admin_f6c`, **no** se pudo desactivar a sí mismo (`409
+CONFLICT`, mismo bloqueo ya documentado desde la Fase 0); queda activo en `siga-tickets` con una
+contraseña de un solo uso que no quedó en ningún archivo del repo ni de la sesión (el archivo
+temporal que contuvo el JWT en el scratchpad de la sesión, nunca la contraseña, se borró al
+terminar). Backend y frontend quedaron **detenidos** al terminar — confirmado con `curl` a
+`http://localhost:3002/health` y `http://localhost:8080/` (ambos sin respuesta) tras detener el
+proceso del backend por su PID (`Get-NetTCPConnection -LocalPort 3002`, `Stop-Process -Force`) y el
+del preview del frontend vía la herramienta de navegador.
+
+## Cierre del plan (7 fases)
+
+Con la Fase 6 termina el plan completo de adaptación del frontend (Fase 0 a Fase 6, tabla al inicio
+de este documento). Estado final:
+
+- **Conectado a datos reales de punta a punta**: autenticación, OT (kanban, listado, detalle,
+  derivación, colaboradores, horas, etapas, comentarios, adjuntos), cotizaciones, tickets (bandeja,
+  detalle, tomar, derivar, mensajes, convertir a OT), SLA (configuración + feriados), notificaciones
+  (campana + resumen de inicio), portal público de mesa de ayuda, dashboard y buscador global — las
+  9 áreas de negocio del prototipo original están contra el backend real, sin datos mock en su
+  lógica.
+- **Dos excepciones conocidas, ambas documentadas en el momento en que se decidieron, no
+  descubiertas recién ahora**: la línea de tiempo (`linea-de-tiempo.tsx`, Fase 1) y el badge "N con
+  SLA vencido" del menú lateral (`AppShell.tsx`, Fase 4) siguen leyendo `ots`/`sla` del store mock
+  (`ot-store.tsx`) — ambas por la misma razón de fondo: el dato que necesitan (`fechaIngreso` en el
+  kanban, o un cálculo de SLA vencido por fuera del propio dashboard) no está expuesto por ningún
+  endpoint existente sin pagar un costo (N+1 o un endpoint nuevo) que ninguna fase tuvo en su
+  alcance escrito. Quedan como trabajo pendiente real si se quiere cerrar el 100%, no como deuda
+  técnica oculta.
+- **`mock-data.ts` y `ot-store.tsx` siguen existiendo tal cual**, sin que se les haya pedido nunca
+  en ninguna fase que se borren — siguen siendo la fuente de las dos excepciones de arriba, además
+  de los tipos/estado que ya no lee ninguna pantalla pero que tampoco se limpiaron por no ser parte
+  del alcance de ninguna fase (mencionado explícitamente al cierre de cada fase que dejó algo sin
+  usar ahí). Una limpieza de esos dos archivos (quitar lo que ya nadie usa, o resolver las dos
+  excepciones de arriba con un cambio de backend) sería trabajo nuevo, no continuación de este plan.
+- **Verificación**: las 7 fases se verificaron con `tsc --noEmit` limpio y un recorrido real en
+  navegador contra el backend real (`siga-tickets`), con usuarios de prueba desechables creados y
+  desactivados en cada fase (o documentado el bloqueo `409` cuando el propio admin de prueba no
+  pudo autodesactivarse). Ningún backend se modificó para hacer pasar al frontend — cualquier
+  comportamiento inesperado encontrado en el camino (ver "Bug encontrado y corregido" de las Fases
+  1, 3, 4 y 5) se corrigió del lado del frontend o se documentó como límite real de la API.

@@ -36,13 +36,15 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { nivelSla } from "@/lib/mock-data";
+import { formatoMoneda, nivelSla } from "@/lib/mock-data";
 import { useOTStore } from "@/lib/ot-store";
 import { OTDetail } from "@/components/OTDetail";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { etiquetaRol } from "@/lib/labels";
+import { etiquetaEstadoCotizacion, etiquetaEstadoOt, etiquetaEstadoTicket, etiquetaRol } from "@/lib/labels";
 import { useUsuarios } from "@/hooks/useUsuarios";
 import { useClientes } from "@/hooks/useClientes";
+import { useDebounced } from "@/hooks/useDebounced";
+import { useBuscar } from "@/hooks/useBuscar";
 import {
   useMarcarNotificacionLeida,
   useMarcarTodasNotificacionesLeidas,
@@ -490,26 +492,22 @@ function ResumenInicio() {
 }
 
 function BuscadorGlobal() {
-  const { ots, tickets, cotizaciones, abrirOT, abrirTicket } = useOTStore();
+  const { abrirOT, abrirTicket } = useOTStore();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
-  const texto = q.trim().toLowerCase();
+  const qDebounced = useDebounced(q, 300);
+  const abierto = q.trim().length >= 2;
+  const { data, isFetching } = useBuscar(qDebounced);
 
-  const coincide = (...campos: (string | undefined)[]) =>
-    campos.filter(Boolean).join(" ").toLowerCase().includes(texto);
-
-  const otsEncontradas = texto.length < 2 ? [] : ots.filter((o) => coincide(o.id, o.titulo, o.cliente)).slice(0, 5);
-  const ticketsEncontrados =
-    texto.length < 2
-      ? []
-      : tickets
-          .filter((t) => coincide(t.id, t.asunto, t.solicitanteNombre, t.solicitanteEmail, t.empresa))
-          .slice(0, 5);
-  const cotizacionesEncontradas =
-    texto.length < 2 ? [] : cotizaciones.filter((c) => coincide(c.id, c.cliente, c.otId)).slice(0, 5);
-
-  const total = otsEncontradas.length + ticketsEncontrados.length + cotizacionesEncontradas.length;
-  const abierto = texto.length >= 2;
+  const otsEncontradas = data?.ots ?? [];
+  const ticketsEncontrados = data?.tickets ?? [];
+  const cotizacionesEncontradas = data?.cotizaciones ?? [];
+  const clientesEncontrados = data?.clientes ?? [];
+  const total = otsEncontradas.length + ticketsEncontrados.length + cotizacionesEncontradas.length + clientesEncontrados.length;
+  // El debounce deja un instante en que `q` ya califica pero `qDebounced` (y por lo tanto `data`)
+  // todavía es el de la búsqueda anterior — se muestra "Buscando…" en vez de un "Sin resultados"
+  // engañoso mientras tanto.
+  const buscando = abierto && (isFetching || qDebounced.trim() !== q.trim());
 
   const Grupo = ({ titulo, children }: { titulo: string; children: ReactNode }) => (
     <div className="py-1.5">
@@ -525,19 +523,31 @@ function BuscadorGlobal() {
   }: {
     principal: string;
     secundario: string;
-    onSelect: () => void;
-  }) => (
-    <button
-      onMouseDown={() => {
-        onSelect();
-        setQ("");
-      }}
-      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/60"
-    >
-      <span className="font-mono text-[11px] text-muted-foreground">{principal}</span>
-      <span className="truncate">{secundario}</span>
-    </button>
-  );
+    onSelect?: () => void;
+  }) => {
+    const contenido = (
+      <>
+        {principal && <span className="font-mono text-[11px] text-muted-foreground">{principal}</span>}
+        <span className="truncate">{secundario}</span>
+      </>
+    );
+    if (!onSelect) {
+      // Cliente: sin pantalla de detalle propia en la app (ver docs/frontend-diseno.md, Fase 6) —
+      // se muestra el resultado sin acción de clic, en vez de inventar una navegación.
+      return <div className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground">{contenido}</div>;
+    }
+    return (
+      <button
+        onMouseDown={() => {
+          onSelect();
+          setQ("");
+        }}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/60"
+      >
+        {contenido}
+      </button>
+    );
+  };
 
   return (
     <div className="relative w-full max-w-md">
@@ -550,7 +560,9 @@ function BuscadorGlobal() {
       />
       {abierto && (
         <div className="absolute left-0 top-11 z-50 w-full overflow-hidden rounded-lg border border-border bg-card shadow-lg">
-          {total === 0 ? (
+          {buscando ? (
+            <p className="px-3 py-4 text-sm text-muted-foreground">Buscando…</p>
+          ) : total === 0 ? (
             <p className="px-3 py-4 text-sm text-muted-foreground">Sin resultados para “{q.trim()}”.</p>
           ) : (
             <div className="max-h-96 divide-y divide-border overflow-y-auto">
@@ -559,8 +571,8 @@ function BuscadorGlobal() {
                   {otsEncontradas.map((o) => (
                     <Fila
                       key={o.id}
-                      principal={o.id}
-                      secundario={`${o.titulo} · ${o.cliente}`}
+                      principal={o.numero}
+                      secundario={`${o.titulo} · ${etiquetaEstadoOt(o.estado)}`}
                       onSelect={() => abrirOT(o.id)}
                     />
                   ))}
@@ -571,8 +583,8 @@ function BuscadorGlobal() {
                   {ticketsEncontrados.map((t) => (
                     <Fila
                       key={t.id}
-                      principal={t.id}
-                      secundario={`${t.asunto} · ${t.solicitanteNombre}`}
+                      principal={t.numero}
+                      secundario={`${t.asunto} · ${etiquetaEstadoTicket(t.estado)}`}
                       onSelect={() => {
                         abrirTicket(t.id);
                         navigate({ to: "/tickets" });
@@ -586,10 +598,17 @@ function BuscadorGlobal() {
                   {cotizacionesEncontradas.map((c) => (
                     <Fila
                       key={c.id}
-                      principal={c.id}
-                      secundario={`${c.cliente} · ${c.estado}`}
+                      principal={c.numero}
+                      secundario={`${etiquetaEstadoCotizacion(c.estado)} · ${formatoMoneda(c.montoClp)}`}
                       onSelect={() => navigate({ to: "/cotizaciones" })}
                     />
+                  ))}
+                </Grupo>
+              )}
+              {clientesEncontrados.length > 0 && (
+                <Grupo titulo="Clientes">
+                  {clientesEncontrados.map((c) => (
+                    <Fila key={c.id} principal="" secundario={c.nombre} />
                   ))}
                 </Grupo>
               )}
