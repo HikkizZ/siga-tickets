@@ -5,8 +5,8 @@ import { logger } from "../config/logger.js";
 import { evaluarSla } from "../jobs/slaJob.js";
 import { procesarCorreoSaliente } from "../jobs/correoSalienteJob.js";
 import { procesarIngesta } from "../jobs/ingestaCorreoJob.js";
-import { advertirSiNoHayMailerReal, mailerReal } from "../mail/outbound/index.js";
-import { advertirSiNoHayMailboxReal, mailboxSourceReal } from "../mail/ingest/index.js";
+import { advertirSiNoHayMailerReal } from "../mail/outbound/index.js";
+import { advertirSiNoHayMailboxReal } from "../mail/ingest/index.js";
 
 // Proceso separado (mismo estilo que server.ts, mismo AppDataSource). Sin BullMQ ni pg-boss:
 // node-cron alcanza para ~8 usuarios (ver docs/backend-diseno.md sección 5).
@@ -43,8 +43,11 @@ async function ejecutarIngestaCorreo(): Promise<void> {
 AppDataSource.initialize()
   .then(async () => {
     logger.info("siga-ot worker escuchando");
-    advertirSiNoHayMailerReal(mailerReal);
-    advertirSiNoHayMailboxReal(mailboxSourceReal);
+    // Best-effort: consultan ConfiguracionCorreo (BD) una vez al arrancar (Fase A). Si un admin
+    // cambia la config después, el próximo tick del job usa la config nueva sin reiniciar el
+    // proceso, pero no hay un aviso en el log en ese momento (ver mail/outbound|ingest/index.ts).
+    await advertirSiNoHayMailerReal();
+    await advertirSiNoHayMailboxReal();
     // Los tres jobs corren una vez al arrancar, sin esperar el primer tick del cron.
     await ejecutarEvaluarSla();
     await ejecutarProcesarCorreo();

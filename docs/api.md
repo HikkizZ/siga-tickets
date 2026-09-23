@@ -673,6 +673,40 @@ Solo si `estado='error'` (`409 CORREO_INGERIDO_NO_REPROCESABLE` si no). Relee el
 
 ---
 
+## Configuración de correo (Fase A)
+
+La config del buzón real (IMAP entrante + SMTP saliente) ya no vive en variables de entorno fijas: es una única fila en `configuracion_correo` (un solo buzón conocido, no un CRUD de varios), administrable por un admin. La contraseña se guarda **cifrada** (AES-256-GCM, `services/cifrado.service.ts`, clave `MAIL_CREDENTIALS_KEY`), nunca en texto plano ni como hash irreversible: hace falta poder recuperarla para conectarse de verdad al buzón. Nunca sale de la API, ni cifrada ni descifrada — ver `select:false` en `entities/ConfiguracionCorreo.ts`. `jobs/correoSalienteJob.ts`/`jobs/ingestaCorreoJob.ts` leen esta config de nuevo en **cada corrida** (no una vez al arrancar el proceso): un admin puede cambiarla en caliente sin reiniciar el worker.
+
+### GET /correo/config · lectura
+
+```json
+{ "status": "ok", "data": {
+  "imapHost": "imap.sigaltda.cl", "imapPort": 993, "imapUser": "soporte@sigaltda.cl", "imapFolder": "INBOX",
+  "imapTls": true, "imapHabilitado": true, "tieneImapPassword": true,
+  "smtpHost": "smtp.sigaltda.cl", "smtpPort": 587, "smtpUser": "soporte@sigaltda.cl",
+  "smtpTls": true, "smtpHabilitado": true, "tieneSmtpPassword": true,
+  "correoDesde": "Soporte SIGA <soporte@sigaltda.cl>", "dominio": "sigaltda.cl",
+  "actualizadoEn": "2026-09-23T10:00:00.000-03:00"
+} }
+```
+Nunca incluye la contraseña (ni `imapPassword`/`smtpPassword` en texto plano, ni la columna cifrada): en su lugar, `tieneImapPassword`/`tieneSmtpPassword` (booleano) para que el frontend pueda mostrar "contraseña ya configurada" sin revelar nada. Sin ninguna fila todavía (buzón nunca configurado): `200` con todo en `null`/`false` (estado válido, no es un error).
+
+### PUT /correo/config · admin
+
+Body parcial (`.strict()`, solo se actualiza lo que se envía — mismo criterio que `PUT /sla/config`):
+
+```json
+{ "imapHost": "imap.sigaltda.cl", "imapPort": 993, "imapUser": "soporte@sigaltda.cl", "imapPassword": "•••", "imapFolder": "INBOX", "imapTls": true, "imapHabilitado": true,
+  "smtpHost": "smtp.sigaltda.cl", "smtpPort": 587, "smtpUser": "soporte@sigaltda.cl", "smtpPassword": "•••", "smtpTls": true, "smtpHabilitado": true,
+  "correoDesde": "Soporte SIGA <soporte@sigaltda.cl>", "dominio": "sigaltda.cl" }
+```
+- `imapPassword`/`smtpPassword`: **siempre texto plano** (se cifran en el servidor antes de guardar); nunca se acepta un valor ya cifrado desde afuera (no es un campo del schema — `imapPasswordCifrado` en el body cae en `400 VALIDATION_ERROR` por `.strict()`). Si no vienen, la contraseña ya guardada queda intacta.
+- Si todavía no existe la fila, `PUT` la crea (upsert) con esta llamada como primer valor.
+- `actualizadoEn`/`actualizadoPorId` se fijan solos en cada `PUT` (auditoría simple, sin tabla de eventos aparte).
+- → `200` con el mismo formato que el GET (sin contraseñas). `puerto` fuera de 1–65535, o un campo con el tipo equivocado → `400 VALIDATION_ERROR`.
+
+---
+
 ## Dashboard y búsqueda global (Fase 7)
 
 Por consulta directa (sin materializar nada — con ~8 usuarios es apropiado), sin paginación ni caché. Ambos endpoints requieren rol mínimo `lectura`.

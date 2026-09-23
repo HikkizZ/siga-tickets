@@ -16,6 +16,7 @@ const ORDEN_LIMPIEZA = [
   "correo_saliente",
   "correo_ingerido",
   "mailbox_cursor",
+  "configuracion_correo",
   "sla_pausa",
   "feriado",
   "notificacion",

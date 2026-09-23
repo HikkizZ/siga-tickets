@@ -1,7 +1,7 @@
 import { AppDataSource } from "../config/dataSource.js";
 import { logger } from "../config/logger.js";
 import { MailboxCursor } from "../entities/MailboxCursor.js";
-import { mailboxSource as mailboxSourceReal } from "../mail/ingest/index.js";
+import { crearMailboxSource } from "../mail/ingest/index.js";
 import type { MailboxSource } from "../mail/ingest/MailboxSource.js";
 import { procesarMensajeEntrante } from "../services/correoIngerido.service.js";
 
@@ -36,7 +36,11 @@ async function guardarCursor(origen: string, cursor: string): Promise<void> {
   );
 }
 
-export async function procesarIngesta(source: MailboxSource = mailboxSourceReal): Promise<void> {
+// Sin source explícito (producción, nunca en tests): la config del buzón vive en BD y puede cambiar
+// en caliente (Fase A), así que se resuelve DE NUEVO en cada corrida vía crearMailboxSource(), no
+// una vez al importar el módulo.
+export async function procesarIngesta(sourceParam?: MailboxSource): Promise<void> {
+  const source = sourceParam ?? (await crearMailboxSource()).source;
   const origen = source.nombre();
   const cursorGuardado = await leerCursor(origen);
   const { mensajes, cursor: cursorNuevo } = await source.fetchNuevos(cursorGuardado);

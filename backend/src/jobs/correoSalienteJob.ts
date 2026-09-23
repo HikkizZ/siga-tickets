@@ -1,6 +1,6 @@
 import { AppDataSource } from "../config/dataSource.js";
 import { CorreoSaliente } from "../entities/CorreoSaliente.js";
-import { mailer as mailerReal } from "../mail/outbound/index.js";
+import { crearMailer } from "../mail/outbound/index.js";
 import type { Mailer } from "../mail/outbound/Mailer.js";
 import { enTransaccion } from "../services/folio.service.js";
 import { notificarCorreoFallido } from "../services/notificacion.service.js";
@@ -59,7 +59,12 @@ async function marcarResultado(id: string, intentosPrevios: number, error: strin
 // Invocable directo (los tests inyectan un Mailer falso), igual que evaluarSla; api/worker.ts la
 // programa cada 30 s con node-cron. Procesa TODAS las filas actualmente vencidas en una pasada, una
 // por una (cada una con su propia transacción corta de toma + su propia transacción de resultado).
-export async function procesarCorreoSaliente(mailer: Mailer = mailerReal): Promise<void> {
+//
+// Sin mailer explícito (producción, nunca en tests): la config del buzón vive en BD y puede cambiar
+// en caliente (Fase A), así que se resuelve DE NUEVO en cada corrida vía crearMailer(), no una vez
+// al importar el módulo.
+export async function procesarCorreoSaliente(mailerParam?: Mailer): Promise<void> {
+  const mailer = mailerParam ?? (await crearMailer()).mailer;
   for (;;) {
     const correo = await tomarPendiente();
     if (!correo) return;

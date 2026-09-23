@@ -1,6 +1,5 @@
 import { ImapFlow } from "imapflow";
 import { simpleParser, type AddressObject, type HeaderValue, type ParsedMail } from "mailparser";
-import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
 import type { CorreoEntrante, MailboxSource } from "./MailboxSource.js";
 
@@ -47,22 +46,36 @@ function aCorreoEntrante(parsed: ParsedMail): CorreoEntrante {
   };
 }
 
+// Config recibida por parámetro (Fase A: antes leía env.mailbox.* directo, ahora la trae
+// mail/ingest/index.ts::crearMailboxSource() desde ConfiguracionCorreo en BD, resuelta en cada
+// corrida del job).
+export interface ImapMailboxSourceConfig {
+  host: string;
+  port: number;
+  user: string;
+  pass: string | null;
+  tls: boolean;
+  folder: string;
+}
+
 // IMAP genérico (imapflow + mailparser), decisión 0.1 del diseño. Usa UID, no fechas: más
 // confiable entre reinicios (una fecha puede repetirse o el reloj del servidor IMAP desviarse; el
 // UID es monótono dentro de un mismo UIDVALIDITY). cursor = UID más alto ya procesado ("0" si
 // nunca se leyó el buzón); se busca el rango (cursor+1):* en cada pasada.
 export class ImapMailboxSource implements MailboxSource {
+  constructor(private readonly config: ImapMailboxSourceConfig) {}
+
   nombre(): string {
-    return `imap:${env.mailbox.imapFolder}`;
+    return `imap:${this.config.folder}`;
   }
 
   async fetchNuevos(cursor: string | null): Promise<{ mensajes: CorreoEntrante[]; cursor: string }> {
     const ultimoUid = cursor ? Number(cursor) : 0;
     const client = new ImapFlow({
-      host: env.mailbox.imapHost!,
-      port: env.mailbox.imapPort,
-      secure: env.mailbox.imapTls,
-      auth: { user: env.mailbox.imapUser!, pass: env.mailbox.imapPass },
+      host: this.config.host,
+      port: this.config.port,
+      secure: this.config.tls,
+      auth: { user: this.config.user, pass: this.config.pass ?? undefined },
       logger: false,
     });
 
@@ -70,7 +83,7 @@ export class ImapMailboxSource implements MailboxSource {
     const mensajes: CorreoEntrante[] = [];
     let nuevoUid = ultimoUid;
     try {
-      const lock = await client.getMailboxLock(env.mailbox.imapFolder);
+      const lock = await client.getMailboxLock(this.config.folder);
       try {
         const rango = `${ultimoUid + 1}:*`;
         for await (const msg of client.fetch(rango, { uid: true, source: true }, { uid: true })) {

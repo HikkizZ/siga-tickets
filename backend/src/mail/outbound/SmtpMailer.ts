@@ -1,25 +1,35 @@
 import nodemailer, { type Transporter } from "nodemailer";
-import { env } from "../../config/env.js";
 import type { Mailer, MensajeSaliente } from "./Mailer.js";
 
-// SMTP real (nodemailer). SMTP_HOST/PORT/USER/PASS por entorno (backend/.env, nunca en el repo);
-// sin ellos configurados, sendMail fallará y el job lo reintenta con backoff (ver
-// jobs/correoSalienteJob.ts). El remitente es SOPORTE_EMAIL: no hay una variable MAIL_REMITENTE
-// aparte porque hoy solo existe un buzón conocido (ver docs/backend-diseno.md decisión 0.1).
+// Config recibida por parámetro (Fase A: antes leía env.mail.* directo, ahora la trae
+// mail/outbound/index.ts::crearMailer() desde ConfiguracionCorreo en BD, resuelta en cada corrida
+// del job). "from" es correoDesde ("Nombre <correo@dominio>"), ya no env.mail.soporteEmail.
+export interface SmtpMailerConfig {
+  host: string;
+  port: number;
+  user: string | null;
+  pass: string | null;
+  tls: boolean;
+  correoDesde: string;
+}
+
 export class SmtpMailer implements Mailer {
   private readonly transporter: Transporter;
+  private readonly correoDesde: string;
 
-  constructor() {
+  constructor(config: SmtpMailerConfig) {
+    this.correoDesde = config.correoDesde;
     this.transporter = nodemailer.createTransport({
-      host: env.mail.smtpHost,
-      port: env.mail.smtpPort ?? 587,
-      auth: env.mail.smtpUser ? { user: env.mail.smtpUser, pass: env.mail.smtpPass } : undefined,
+      host: config.host,
+      port: config.port,
+      secure: config.tls,
+      auth: config.user ? { user: config.user, pass: config.pass ?? undefined } : undefined,
     });
   }
 
   async enviar(msg: MensajeSaliente): Promise<void> {
     await this.transporter.sendMail({
-      from: env.mail.soporteEmail,
+      from: this.correoDesde,
       to: msg.para,
       subject: msg.asunto,
       html: msg.cuerpoHtml,

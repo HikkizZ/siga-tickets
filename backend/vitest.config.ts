@@ -6,6 +6,8 @@ process.env.NODE_ENV = "test";
 process.env.DB_NAME = "siga-tickets-test";
 process.env.LOG_LEVEL = "silent";
 process.env.JWT_SECRET = "secreto-solo-para-tests-0123456789abcdef";
+// Hex de 64 caracteres (32 bytes), solo para tests (Fase A, config de correo cifrada en BD).
+process.env.MAIL_CREDENTIALS_KEY = "c48fa319ee9ea57d18fba7cdc57fcf7634fa91a1c896087d3611840b647f6e26";
 // Adjuntos de test en una carpeta propia (ignorada por git); globalSetup la borra al terminar.
 process.env.ADJUNTOS_DIR = "./storage/adjuntos-test";
 

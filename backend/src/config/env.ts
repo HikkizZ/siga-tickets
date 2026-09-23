@@ -40,10 +40,22 @@ const esquema = z
     IMAP_PASS: z.string().optional(),
     IMAP_TLS: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
     IMAP_FOLDER: z.string().min(1).default("INBOX"),
+    // Fase A (config de correo en BD): clave simétrica para cifrar/descifrar imap_password_cifrado/
+    // smtp_password_cifrado en configuracion_correo (services/cifrado.service.ts, AES-256-GCM).
+    // Hex de 64 caracteres = 32 bytes exactos. Ninguna credencial de correo se guarda en texto
+    // plano ni con un hash irreversible: hace falta poder recuperarla para conectarse de verdad.
+    MAIL_CREDENTIALS_KEY: z
+      .string()
+      .length(64, "MAIL_CREDENTIALS_KEY debe ser un string hexadecimal de 64 caracteres (32 bytes)")
+      .regex(/^[0-9a-fA-F]+$/, "MAIL_CREDENTIALS_KEY debe ser hexadecimal"),
   })
   .refine((e) => !(e.NODE_ENV === "production" && e.JWT_SECRET.startsWith("cambia-esto")), {
     message: "JWT_SECRET sigue con el valor de ejemplo",
     path: ["JWT_SECRET"],
+  })
+  .refine((e) => !(e.NODE_ENV === "production" && e.MAIL_CREDENTIALS_KEY === "0".repeat(64)), {
+    message: "MAIL_CREDENTIALS_KEY sigue con el valor de ejemplo",
+    path: ["MAIL_CREDENTIALS_KEY"],
   });
 
 const resultado = esquema.safeParse(process.env);
@@ -90,4 +102,5 @@ export const env = {
     imapTls: e.IMAP_TLS,
     imapFolder: e.IMAP_FOLDER,
   },
+  mailCredentialsKey: e.MAIL_CREDENTIALS_KEY,
 };
