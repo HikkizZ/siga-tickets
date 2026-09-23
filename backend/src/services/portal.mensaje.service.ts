@@ -1,15 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { AppDataSource } from "../config/dataSource.js";
 import { MensajeTicket } from "../entities/MensajeTicket.js";
-import { Ticket } from "../entities/Ticket.js";
-import { EntidadAdjunto, EstadoTicket, TipoMensajeTicket } from "../entities/enums.js";
+import { EntidadAdjunto, TipoMensajeTicket } from "../entities/enums.js";
 import type { ArchivoSubido } from "./adjunto.service.js";
 import { guardarAdjunto, validarArchivo, verificarCuotaAdjunto } from "./adjunto.service.js";
 import { registrarEventoTicket } from "./evento.service.js";
 import { enTransaccion } from "./folio.service.js";
-import { ahoraDb } from "./ot.common.js";
-import { cerrarPausaYCorrerVencimientos } from "./sla.pausa.service.js";
-import { bloquearTicket } from "./ticket.common.js";
+import { bloquearTicket, reabrirTicketSiCorresponde } from "./ticket.common.js";
 import { obtenerUsuarioSistemaId } from "./usuarioSistema.service.js";
 
 export interface CrearMensajePortalInput {
@@ -49,17 +46,9 @@ export async function crearMensajePortal(ticketId: string, input: CrearMensajePo
     }
 
     // Reabre esperando_cliente/resuelto -> abierto y cierra la pausa de SLA activa; cerrado NO se
-    // reabre automáticamente (decisión del staff, punto 7 del encargo).
-    if (ticket.estado === EstadoTicket.ESPERANDO_CLIENTE || ticket.estado === EstadoTicket.RESUELTO) {
-      const anterior = ticket.estado;
-      const ahora = await ahoraDb(m);
-      if (anterior === EstadoTicket.ESPERANDO_CLIENTE) {
-        await cerrarPausaYCorrerVencimientos(m, ticket, ahora);
-      }
-      ticket.estado = EstadoTicket.ABIERTO;
-      await m.save(Ticket, ticket);
-      await registrarEventoTicket(m, ticketId, sistemaId, { tipo: "estado_cambiado", de: anterior, a: EstadoTicket.ABIERTO });
-    }
+    // reabre automáticamente (decisión del staff, punto 7 del encargo). Factorizada en
+    // ticket.common.ts: la reutiliza también la ingesta de correo (Fase 6).
+    await reabrirTicketSiCorresponde(m, ticket, sistemaId);
 
     await registrarEventoTicket(m, ticketId, sistemaId, { tipo: "mensaje_cliente", mensajeId });
   });

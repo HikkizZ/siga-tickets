@@ -1,3 +1,4 @@
+import { DateTime } from "luxon";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
@@ -66,7 +67,10 @@ describe("GET /tickets", () => {
   it("desde/hasta filtran por fecha_ingreso", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_fechas");
     await crearTicketApi(admin.auth);
-    const hoy = new Date().toISOString().slice(0, 10);
+    // El filtro compara el día calendario en Chile (AT TIME ZONE 'Pacific SA Standard Time' en
+    // ticket.service.ts), no en UTC: cerca de la medianoche ambas fechas difieren y el test fallaba
+    // con new Date().toISOString(), que da el día en UTC.
+    const hoy = DateTime.now().setZone("America/Santiago").toISODate();
 
     const res = await request(app).get(`${API}/tickets?desde=${hoy}&hasta=${hoy}`).set("Authorization", admin.auth);
 

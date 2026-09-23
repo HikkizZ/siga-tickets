@@ -1,6 +1,6 @@
-# siga-ot — Contrato de la API (Fases 0 a 5)
+# siga-ot — Contrato de la API (Fases 0 a 6)
 
-Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos), Fase 2 (cotizaciones), Fase 3 (tickets: hilo, tomar/derivar, conversión a OT), Fase 4 (SLA en horas hábiles + notificaciones) y Fase 5 (portal público + correo saliente) implementadas.
+Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos), Fase 2 (cotizaciones), Fase 3 (tickets: hilo, tomar/derivar, conversión a OT), Fase 4 (SLA en horas hábiles + notificaciones), Fase 5 (portal público + correo saliente) y Fase 6 (ingesta de correo, IMAP) implementadas.
 
 ## Convenciones
 
@@ -24,6 +24,8 @@ Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad
 | 409 | `CONFLICTO_CONCURRENCIA` | Otra operación ganó una carrera (derivación/toma simultánea); reintenta |
 | 409 | `TICKET_YA_ASIGNADO` | `POST /tickets/:id/tomar` sobre un ticket que ya tiene responsable |
 | 409 | `TICKET_OT_YA_VINCULADO` | `POST /tickets/:id/ots` con un par ticket/OT ya vinculado |
+| 404 | `CORREO_INGERIDO_NO_ENCONTRADO` | `POST /correos-ingeridos/:id/reprocesar` con un id inexistente (Fase 6) |
+| 409 | `CORREO_INGERIDO_NO_REPROCESABLE` | `POST /correos-ingeridos/:id/reprocesar` sobre un correo que no está en `estado='error'` (Fase 6) |
 | 500 | `INTERNAL_ERROR` | Error no controlado (nunca trae detalle) |
 
 ### Permisos por fila (OT y tickets)
@@ -630,3 +632,41 @@ Un worker (`api/worker.ts`, cron cada 30 s) toma filas `pendiente` vencidas (`WI
 
 - Éxito → `estado='enviado'`.
 - Falla → `intentos += 1`; si llega a 5, `estado='fallido'` + notificación in-app a todos los `admin`; si no, vuelve a `pendiente` con `proximoIntentoEn = ahora + 2^intentos minutos`.
+
+---
+
+## Ingesta de correo (Fase 6)
+
+`MailboxSource` (`mail/ingest/`): IMAP genérico (decisión 0.1 del diseño), `NoopMailboxSource` si `IMAP_HOST` no está configurado (no falla al arrancar, solo no encuentra mensajes). `MAILBOX_PROVIDER=graph` está reservado en el tipo pero lanza un error claro al arrancar si se selecciona (no implementado, mismo patrón que `CAPTCHA_PROVIDER`).
+
+Un worker (`api/worker.ts`, cron cada **2 minutos**, corre también una vez al arrancar) llama a `jobs/ingestaCorreoJob.ts::procesarIngesta()`, que:
+
+1. Lee el cursor guardado para el origen (`mailbox_cursor`, PK = `MailboxSource.nombre()`; `null` la primera vez).
+2. Pide los mensajes nuevos a la `MailboxSource` (`fetchNuevos(cursor)`, basado en UID de IMAP, no en fechas).
+3. Procesa cada mensaje por separado (`services/correoIngerido.service.ts::procesarMensajeEntrante`), **cada uno en su propia transacción**: un mensaje que falla nunca tumba el resto del lote.
+4. Al terminar de intentar TODOS los mensajes del lote (con éxito o en error), guarda el cursor nuevo devuelto por `fetchNuevos` (un único `MERGE` sobre `mailbox_cursor`). Criterio de consistencia: cada mensaje ya queda registrado de forma durable e idempotente en `correo_ingerido` (INSERT confirmado antes de tocar cualquier ticket) independientemente de si el resto del pipeline tuvo éxito o falló; si el proceso muere a mitad de un lote, el cursor guardado simplemente no avanza y la próxima pasada vuelve a pedir el mismo rango — la idempotencia de `message_id` (UNIQUE) descarta sin duplicar nada lo que ya se había registrado.
+
+Pipeline por mensaje (orden fijo):
+
+1. **Idempotencia**: el correo crudo (una serialización JSON de `CorreoEntrante`, adjuntos en base64) se guarda en `FileStorage` con clave = su propio sha256, usada como `raw_ref`; luego `INSERT correo_ingerido (message_id, ...)`. Si `message_id` ya existía (UNIQUE), el mensaje se descarta sin ningún otro efecto.
+2. **Bucles** (`estado='ignorado'`, sin tocar ningún ticket): cabecera `Auto-Submitted` presente y distinta de `no`; `Precedence: bulk` o `auto_reply`; remitente = `SOPORTE_EMAIL`; `Content-Type: multipart/report`; remitente `mailer-daemon@...`.
+3. **Threading**: `In-Reply-To`/`References` contra `mensaje_ticket.message_id` (coincidencia exacta) primero; si no hay match, `TK-\d{4}` en el asunto, validando que el remitente coincida con `ticket.solicitanteEmail` (si no coincide, se trata como ticket **nuevo**, nunca secuestra el ticket ajeno). Sin match de ninguna de las dos: ticket nuevo.
+4. **Ticket existente**: nuevo `mensaje_ticket` (`tipo='cliente'`, `autorId=null`, `autorExterno`=remitente, `cuerpo`=texto plano, `cuerpoHtml`=HTML sanitizado con `sanitize-html` si vino, `messageId`/`inReplyTo`/`referencias` copiados). Si el ticket estaba `esperando_cliente` o `resuelto`: reabre a `abierto` y cierra la pausa de SLA activa (función compartida con el portal, `ticket.common.ts::reabrirTicketSiCorresponde`); `cerrado` no se reabre. Evento `mensaje_cliente {mensajeId}`.
+5. **Ticket nuevo**: `canal='correo'`, `recepcionadoPor='sistema'`, `solicitanteNombre`/`solicitanteEmail` del remitente, `asunto` del correo, `descripcion`=texto plano (sin generar un primer `mensaje_ticket`, igual que el portal), folio `TK-xxxx`, prioridad `media` (el correo no trae una señal de prioridad, mismo default que el portal), SLA calculado igual que las demás rutas de creación, `fechaIngreso` = cuándo llegó el correo (no cuándo se procesó). Los adjuntos del correo **sí** se guardan en un ticket nuevo (decisión documentada, `entidadTipo='ticket'`), ya que no hay `mensaje_ticket` al cual colgarlos (el cuerpo va directo a `descripcion`).
+6. **Adjuntos**: misma validación de MIME/extensión/tamaño que `POST /adjuntos`. Uno que no pasa la lista blanca se **descarta en silencio** (se deja constancia en el log, el resto del mensaje se procesa igual). Cuota excedida, fallo de antivirus o de almacenamiento **sí** propagan el error (todo el mensaje cae a `estado='error'`).
+7. Sin error: `correo_ingerido.estado='procesado'`, `ticketId` = el ticket correspondiente. Con una excepción no esperada: `estado='error'`, `error`=el mensaje.
+
+### GET /correos-ingeridos · admin
+
+Query: `page` (≥1, def. 1), `perPage` (1–100, def. 25), `estado` (`pendiente|procesado|ignorado|error`, opcional).
+
+```json
+{ "status": "ok",
+  "data": [{ "id": "…", "messageId": "<abc@cliente.cl>", "origen": "imap:INBOX", "recibidoEn": "…",
+             "estado": "error", "ticketId": null, "error": "Se superaría el máximo de 25 MB de adjuntos" }],
+  "meta": { "page": 1, "perPage": 25, "total": 1 } }
+```
+
+### POST /correos-ingeridos/:id/reprocesar · admin
+
+Solo si `estado='error'` (`409 CORREO_INGERIDO_NO_REPROCESABLE` si no). Relee el `raw_ref` desde `FileStorage` (sin volver a conectarse al buzón), reconstruye el correo y corre el mismo pipeline sobre ese único mensaje, reutilizando la fila existente (nunca duplica una fila por el mismo `message_id`). → `200 { data: { id, messageId, origen, recibidoEn, estado, ticketId, error } }`, incluso si vuelve a fallar (queda en `error` de nuevo). `404 CORREO_INGERIDO_NO_ENCONTRADO` si el id no existe.

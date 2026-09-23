@@ -15,6 +15,7 @@ const CON_SEMILLA = ["folio_counter", "sla_config", "calendario_laboral", "migra
 const ORDEN_LIMPIEZA = [
   "correo_saliente",
   "correo_ingerido",
+  "mailbox_cursor",
   "sla_pausa",
   "feriado",
   "notificacion",

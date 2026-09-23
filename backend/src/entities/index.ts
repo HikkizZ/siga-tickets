@@ -11,6 +11,7 @@ import { Evento } from "./Evento.js";
 import { Feriado } from "./Feriado.js";
 import { FolioCounter } from "./FolioCounter.js";
 import { HoraTrabajada } from "./HoraTrabajada.js";
+import { MailboxCursor } from "./MailboxCursor.js";
 import { MensajeTicket } from "./MensajeTicket.js";
 import { Notificacion } from "./Notificacion.js";
 import { Ot } from "./Ot.js";
@@ -35,6 +36,7 @@ export const entidades = [
   Feriado,
   FolioCounter,
   HoraTrabajada,
+  MailboxCursor,
   MensajeTicket,
   Notificacion,
   Ot,

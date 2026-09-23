@@ -30,6 +30,16 @@ const esquema = z
     SMTP_PORT: z.coerce.number().int().positive().optional(),
     SMTP_USER: z.string().optional(),
     SMTP_PASS: z.string().optional(),
+    // Fase 6 (ingesta de correo): "graph" queda en el tipo como hueco para el futuro (mismo
+    // espíritu que CAPTCHA_PROVIDER en la Fase 5), no se implementa de verdad todavía. Sin
+    // IMAP_HOST configurado se usa NoopMailboxSource (no falla al arrancar).
+    MAILBOX_PROVIDER: z.enum(["imap", "graph"]).default("imap"),
+    IMAP_HOST: z.string().optional(),
+    IMAP_PORT: z.coerce.number().int().positive().default(993),
+    IMAP_USER: z.string().optional(),
+    IMAP_PASS: z.string().optional(),
+    IMAP_TLS: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+    IMAP_FOLDER: z.string().min(1).default("INBOX"),
   })
   .refine((e) => !(e.NODE_ENV === "production" && e.JWT_SECRET.startsWith("cambia-esto")), {
     message: "JWT_SECRET sigue con el valor de ejemplo",
@@ -70,5 +80,14 @@ export const env = {
     smtpPort: e.SMTP_PORT,
     smtpUser: e.SMTP_USER,
     smtpPass: e.SMTP_PASS,
+  },
+  mailbox: {
+    provider: e.MAILBOX_PROVIDER,
+    imapHost: e.IMAP_HOST,
+    imapPort: e.IMAP_PORT,
+    imapUser: e.IMAP_USER,
+    imapPass: e.IMAP_PASS,
+    imapTls: e.IMAP_TLS,
+    imapFolder: e.IMAP_FOLDER,
   },
 };
