@@ -31,6 +31,7 @@ Confirmado antes de tocar nada: `npm install` limpio (414 paquetes, 0 vulnerabil
 
 - **Fase 0**: hecha (2026-09-22). Detalle abajo.
 - **Fase 1**: hecha (2026-09-23). Detalle abajo.
+- **Fase 2**: hecha (2026-09-23). Detalle abajo.
 
 ## Fase 0 — qué quedó
 
@@ -294,3 +295,140 @@ Al terminar: `qa_felipe_tec_a` y `qa_felipe_tec_b` quedaron desactivados
 **no** se pudo desactivar a sí mismo (`409 CONFLICT`, mismo bloqueo que ya documentó la Fase 0);
 queda activo en `siga-tickets` con una contraseña de un solo uso que no quedó en ningún archivo del
 repo ni de logs. Backend y frontend quedaron **detenidos** al terminar (no corriendo).
+
+## Fase 2 — qué quedó
+
+Archivos nuevos:
+
+- `src/lib/api/cotizaciones.ts` — funciones de red puras para Cotizaciones (mismo patrón que
+  `ots.ts`): tipos `Cotizacion` (forma común list/detalle), `CotizacionDetalle` (agrega
+  `aprobadaEn`/`eventos`), `CotizacionesFiltros`, y una función por endpoint: `obtenerCotizaciones`,
+  `obtenerCotizacion`, `crearCotizacion`, `actualizarCotizacion`, `cambiarEstadoCotizacion`. El
+  endpoint de vincular una cotización **existente** a una OT (`POST /ots/:id/cotizaciones/vincular`)
+  se agregó en `ots.ts` en vez de acá (`vincularCotizacion(otId, cotizacionId)`): devuelve el mismo
+  `<Detalle de OT>` que `GET /ots/:id`, no una `Cotizacion`, así que pertenece al dominio de OT.
+- `src/hooks/useCotizaciones.ts` — un hook de TanStack Query por operación (`useCotizaciones`,
+  `useCotizacion`, `useCrearCotizacion`, `useActualizarCotizacion`, `useCambiarEstadoCotizacion`),
+  mismo criterio que `useOts.ts`. Cada mutación invalida el árbol `["cotizaciones"]` y también
+  `["ots"]`: una cotización se embebe en `GET /ots/:id` (`ot.cotizaciones`), así que crear, editar o
+  cambiar su estado debe refrescar también el detalle de la OT si está abierto. `useOts.ts` ganó el
+  hook simétrico `useVincularCotizacion` (invalida `["ots"]` y `["cotizaciones"]` por la misma
+  razón) y muestra un `toast.success` al vincular, igual que `useDerivarOt`.
+
+Editados:
+
+- `src/lib/api/ots.ts` — se agregó `vincularCotizacion(otId, cotizacionId): Promise<OtDetalle>`
+  (ver arriba).
+- `src/hooks/useOts.ts` — se agregó `useVincularCotizacion()` (ver arriba).
+- `src/lib/labels.ts` — se agregó `ESTADOS_COTIZACION` (arreglo fijo para el `<select>` de filtro),
+  `transicionesValidasCotizacion(estado)` (tabla de transiciones válidas de
+  `POST /cotizaciones/:id/estado`, para no ofrecer nunca un botón que el backend rechazaría con
+  `409 TRANSICION_INVALIDA`) y `puedeEscribirCotizaciones(rol)` (`rol === "admin" || rol ===
+  "gestion"` — el único criterio RBAC visual de esta fase, ver decisión abajo). El resto del
+  archivo no cambió.
+- `src/components/OTDetail.tsx` — sección "Cotización": los botones "Crear cotización" y "Vincular
+  cotización existente" (antes deshabilitados con "Disponible en la próxima fase") ahora abren
+  `DialogoCrearCotizacion`/`DialogoVincularCotizacion` (componentes locales al archivo, mismo
+  criterio que `CadenaResponsablesOt` — solo los usa esta pantalla). Para `tecnico`/`lectura` la
+  sección completa de escritura se reemplaza por un texto explicando la restricción (ver decisión
+  RBAC abajo); la lista de cotizaciones de la OT sigue siendo de solo lectura para todos, como ya
+  lo era desde la Fase 1.
+- `src/routes/cotizaciones.tsx` — reescrita: reemplaza `useOTStore().cotizaciones` (mock) por
+  `useCotizaciones(filtros)` real, con paginación de servidor (25 por página, mismo criterio que
+  Todas las OT), filtros reales (`estado`, `clienteId` vía `useClientes()`, `q` con debounce vía
+  `useDebounced`, `desde`/`hasta`) y un diálogo de detalle (`DialogoDetalleCotizacion`, local al
+  archivo) al hacer clic en una fila. La columna "OT vinculada" sigue llamando a
+  `useOTStore().abrirOT(ot.id)` igual que antes.
+
+Fuera de alcance, sin tocar (más allá de lo estrictamente necesario): `mock-data.ts` (el tipo
+`Cotizacion` mock y el arreglo `cotizaciones` siguen ahí — `TicketDetail.tsx`/mock de tickets no se
+tocaron, no fueron parte de esta fase), `ot-store.tsx` (`crearCotizacion`/`vincularCotizacion` mock
+siguen existiendo en el store — ya nadie las llama desde `OTDetail.tsx`/`cotizaciones.tsx`, pero no
+se borraron porque no era parte del alcance quitarlas del store), tickets, mesa de ayuda, SLA,
+notificaciones, dashboard, portal público.
+
+### Decisiones dentro del espacio permitido
+
+- **RBAC visual**: no había precedente en el código (se revisó `AppShell.tsx` y el resto de rutas;
+  nada ocultaba controles por rol todavía). Se definió `puedeEscribirCotizaciones(rol)` en
+  `labels.ts` y se usa igual en las tres superficies de escritura (vista `/cotizaciones`, diálogo de
+  detalle, sección "Cotización" de `OTDetail.tsx`): oculta los controles (no solo los deshabilita)
+  para `tecnico`/`lectura`, con un texto explicando el motivo. La lectura nunca se oculta.
+- **Detalle de cotización**: se construyó (`DialogoDetalleCotizacion` en `cotizaciones.tsx`) porque
+  la tabla no alcanza para mostrar `aprobadaEn` ni el timeline propio (`eventos`), y las
+  transiciones de estado necesitan mostrar solo las válidas para el estado actual — un select libre
+  con las 4 siempre visibles habría dejado que el usuario intente una transición que el backend
+  rechaza con `409 TRANSICION_INVALIDA` sin necesidad. El costo extra de construirlo fue bajo porque
+  reutiliza `useCotizacion(id)` y los mismos componentes de UI que el resto de la app.
+- **Edición de cotización (`PATCH`)**: se incluyó en el mismo diálogo de detalle, visible solo si
+  `estado === 'borrador'` y el rol puede escribir — extensión barata del panel que ya existía para
+  transiciones de estado (tres campos: monto, fecha, cliente), no una superficie nueva.
+- **Selector de cliente en "Crear cotización" desde `OTDetail.tsx`**: no se pide. El contrato
+  (`POST /cotizaciones`) autocompleta `clienteId` con el de la OT si no es interna, y no lo exige si
+  lo es — pedirlo habría sido inventar un campo que el backend ni necesita ni usa en ese flujo.
+- **"Vincular cotización existente"**: se implementó como una búsqueda simple (`Input` con
+  debounce sobre `GET /cotizaciones?q=`, hasta 20 resultados, filtrando en el cliente las que ya
+  pertenecen a la OT abierta) en vez de un componente de búsqueda nuevo — mismo criterio de "tu
+  criterio, simple" del enunciado. El backend valida el resto (`409 COTIZACION_NO_VINCULABLE` si la
+  cotización elegida está `aprobada`/`rechazada` y pertenece a otra OT), confirmado en el recorrido.
+- **Filtro `otId` en `/cotizaciones`**: el hook (`useCotizaciones`/`CotizacionesFiltros`) lo acepta,
+  pero no se agregó un `<select>` de OT en la vista — no hay un punto natural para elegir una OT
+  arbitraria ahí (a diferencia de cliente, que ya tiene `useClientes()` listo), y `ot.cotizaciones`
+  embebido en el detalle de OT ya cubre "ver las cotizaciones de esta OT" sin ese filtro.
+- **Suma total en el pie de la tabla**: se quitó (el mock la tenía, sumando sobre el arreglo
+  completo). Con paginación de servidor esa suma solo reflejaría la página visible, lo que sería
+  engañoso presentado como total — se dejó solo el conteo (`X cotizaciones · página Y de Z`).
+
+## Fase 2 — verificación
+
+`npx tsc --noEmit` limpio.
+
+Recorrido real en navegador (backend `npm run dev` contra la BD real `siga-tickets`, frontend
+`npm run dev` puerto 8080, MCP de navegador):
+
+1. Admin desechable nuevo por variables de entorno al script `seed.ts`
+   (`SEED_ADMIN_USERNAME=qa_felipe_admin_f2`, contraseña propia de un solo uso, nunca impresa en
+   ningún archivo del repo) y, con su token, un usuario `gestion` (`qa_felipe_gestion_f2`) y un
+   `tecnico` (`qa_felipe_tecnico_f2`) reales vía `POST /usuarios`.
+2. Con `qa_felipe_gestion_f2`: `/cotizaciones` cargó vacía (`0 cotizaciones`) contra la OT real
+   `OT-1041` que había quedado de la Fase 1. Se abrió su detalle y se usó "Crear cotización"
+   (monto `$750.000`, fecha de hoy, marcada como principal) → `POST /cotizaciones` con `otId` fijo,
+   `clienteId` autocompletado por el backend (`Minera Los Andes`, sin pedirlo en el formulario) →
+   apareció de inmediato en `ot.cotizaciones` (badges "Borrador"/"Principal") y en `/cotizaciones`
+   (`COT-2041`).
+3. Cambio de estado desde el diálogo de detalle: `Borrador → Enviada → Aprobada`
+   (`POST /cotizaciones/:id/estado` ×2). Tras cada cambio el diálogo mostró solo los botones de las
+   transiciones válidas siguientes (nunca las 4 fijas), y al llegar a `Aprobada` fijó `aprobadaEn`
+   (`23-sept, 12:25 a. m.`) y mostró "Sin transiciones disponibles desde este estado" — `aprobada`
+   es terminal, confirmado.
+4. Se creó una OT auxiliar (`OT-1042`, cliente `Constructora Vertiz`) y una segunda cotización SIN
+   OT (`POST /cotizaciones` directo con `clienteId=Minera Los Andes`, sin `otId`, para no depender
+   del formulario de creación que siempre fija `otId`) → `COT-2042`. Desde el detalle de `OT-1042`,
+   "Vincular cotización existente" → buscar "COT-2042" → un clic → `POST
+   /ots/:id/cotizaciones/vincular` (200) → apareció en `ot.cotizaciones` de OT-1042 y el evento
+   `cotizacion_vinculada` quedó en el historial de esa OT ("vinculó la cotización COT-2042").
+5. Caso de error real: desde el mismo diálogo de `OT-1042`, se intentó vincular `COT-2041` (ya
+   `Aprobada` y perteneciente a `OT-1041`) → `409 COTIZACION_NO_VINCULABLE`, y el toast mostró el
+   mensaje real del backend ("No se puede reasignar una cotización aprobada o rechazada de otra
+   OT"), no uno genérico. `COT-2042` no se vio afectada.
+6. Edición (`PATCH /cotizaciones/:id`, solo en `borrador`): sobre `COT-2042` se cambió el monto de
+   `$300.000` a `$425.000` desde "Editar monto, fecha o cliente" → confirmado en el detalle, en la
+   fila de `/cotizaciones` y en el evento `cotizacion_editada` del historial (con
+   `montoClpAntes`/`montoClpDespues` correctos en la respuesta de red).
+7. Con `qa_felipe_tecnico_f2` (técnico): `/cotizaciones` mostró "Solo lectura para tu rol" y la
+   tabla completa (ambas cotizaciones, con datos reales) sin errores. Al abrir el detalle de
+   `COT-2042`, no aparecieron ni "Cambiar estado" ni "Editar…" (solo cliente/OT/monto/fecha/versión
+   e historial). Al abrir `OT-1042` desde la tabla, la sección "Cotización" mostró la cotización
+   vinculada de solo lectura con el texto "Solo gestión o administración pueden crear o vincular
+   cotizaciones." en vez de los botones — RBAC visual confirmado en ambas superficies.
+8. Consola del navegador revisada con `read_console_messages`: sin `TypeError` ni `Uncaught` en
+   ningún punto del recorrido; los únicos `error` registrados son los HTTP no-2xx esperados (los
+   403 de RBAC del backend ya documentados desde la Fase 0, y el 409 del paso 5).
+
+Al terminar: `qa_felipe_gestion_f2` y `qa_felipe_tecnico_f2` quedaron desactivados
+(`PATCH /usuarios/:id {activo:false}`, ambos `200`). El admin de prueba `qa_felipe_admin_f2`
+**no** se pudo desactivar a sí mismo (`409 CONFLICT`, mismo bloqueo ya documentado en la Fase 0 y
+la Fase 1); queda activo en `siga-tickets` con una contraseña de un solo uso que no quedó en ningún
+archivo del repo. Backend y frontend quedaron **detenidos** al terminar (no corriendo) — se
+verificó con un `curl` a `http://localhost:3002/health` y `http://localhost:8080/` que ninguno de
+los dos puertos respondía tras detener los procesos.

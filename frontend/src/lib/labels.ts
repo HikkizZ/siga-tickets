@@ -117,6 +117,19 @@ export const etiquetaEstadoCotizacion = crearTraductor<EstadoCotizacion>(
   { borrador: "Borrador", enviada: "Enviada", aprobada: "Aprobada", rechazada: "Rechazada" },
   "EstadoCotizacion",
 );
+export const ESTADOS_COTIZACION: readonly EstadoCotizacion[] = ["borrador", "enviada", "aprobada", "rechazada"];
+
+// Transiciones válidas de estado de una cotización (docs/api.md, POST /cotizaciones/:id/estado):
+// cualquier otra combinación (incluida la misma → la misma) devuelve 409 TRANSICION_INVALIDA.
+const TRANSICIONES_COTIZACION: Record<EstadoCotizacion, readonly EstadoCotizacion[]> = {
+  borrador: ["enviada"],
+  enviada: ["aprobada", "rechazada", "borrador"],
+  aprobada: [],
+  rechazada: ["enviada"],
+};
+export function transicionesValidasCotizacion(estado: EstadoCotizacion): readonly EstadoCotizacion[] {
+  return TRANSICIONES_COTIZACION[estado];
+}
 
 // ---- Usuarios ----
 
@@ -125,3 +138,9 @@ export const etiquetaRol = crearTraductor<Rol>(
   { admin: "Administrador", gestion: "Gestión", tecnico: "Técnico", lectura: "Lectura" },
   "Rol",
 );
+
+// Cotizaciones (Fase 2): a diferencia de OT, escribir (crear, editar, cambiar estado, vincular)
+// es exclusivo de gestion/admin, sin excepción por fila (docs/api.md, sección "Cotizaciones").
+export function puedeEscribirCotizaciones(rol: Rol): boolean {
+  return rol === "admin" || rol === "gestion";
+}

@@ -296,6 +296,16 @@ export async function eliminarEtapa(id: string, etapaId: string): Promise<void> 
   await apiClient.delete(`/ots/${id}/etapas/${etapaId}`);
 }
 
+// ---- Cotizaciones (Fase 2) ----
+
+/** Liga una cotización EXISTENTE (sin OT, o de otra OT) a esta OT — distinto de crear una
+ * cotización nueva con `otId` (eso es POST /cotizaciones, ver src/lib/api/cotizaciones.ts).
+ * Devuelve el mismo Detalle de OT que GET /ots/:id, ya con la cotización en `cotizaciones`. */
+export async function vincularCotizacion(otId: string, cotizacionId: string): Promise<OtDetalle> {
+  const { data } = await apiClient.post<OtDetalle>(`/ots/${otId}/cotizaciones/vincular`, { cotizacionId });
+  return data;
+}
+
 // ---- Adjuntos ----
 
 export async function subirAdjunto(otId: string, archivo: File): Promise<AdjuntoOt> {

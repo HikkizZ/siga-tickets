@@ -37,6 +37,17 @@ function useInvalidarOts() {
   return () => queryClient.invalidateQueries({ queryKey: otKeys.all });
 }
 
+/** Igual que useInvalidarOts(), y además invalida "cotizaciones": vincular una cotización
+ * existente a esta OT le cambia su `ot` (y, si venía sin OT, su `version`), así que la vista
+ * /cotizaciones no puede quedarse con la copia vieja. */
+function useInvalidarOtsYCotizaciones() {
+  const queryClient = useQueryClient();
+  return () => {
+    queryClient.invalidateQueries({ queryKey: otKeys.all });
+    queryClient.invalidateQueries({ queryKey: ["cotizaciones"] });
+  };
+}
+
 export function useOtsKanban(filtros?: OtsKanbanFiltros) {
   const { estaAutenticado } = useAuth();
   return useQuery({
@@ -173,6 +184,18 @@ export function useEliminarEtapa() {
   return useMutation({
     mutationFn: ({ id, etapaId }: { id: string; etapaId: string }) => api.eliminarEtapa(id, etapaId),
     onSuccess: () => invalidar(),
+    onError: (error) => toast.error(mensajeError(error)),
+  });
+}
+
+export function useVincularCotizacion() {
+  const invalidar = useInvalidarOtsYCotizaciones();
+  return useMutation({
+    mutationFn: ({ id, cotizacionId }: { id: string; cotizacionId: string }) => api.vincularCotizacion(id, cotizacionId),
+    onSuccess: () => {
+      invalidar();
+      toast.success("Cotización vinculada correctamente.");
+    },
     onError: (error) => toast.error(mensajeError(error)),
   });
 }

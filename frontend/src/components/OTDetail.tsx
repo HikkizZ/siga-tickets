@@ -22,6 +22,8 @@ import { DialogoDerivar } from "@/components/Derivacion";
 import { EtapasEditor, esEtapaNueva, nuevaEtapa, type EtapaBorrador } from "@/components/EtapasEditor";
 import { SelectorColaboradores } from "@/components/SelectorColaboradores";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -40,11 +42,15 @@ import {
   etiquetaOrigenOt,
   etiquetaPrioridad,
   etiquetaRol,
+  puedeEscribirCotizaciones,
 } from "@/lib/labels";
 import { descargarAdjunto, type EventoOt, type TramoResponsable } from "@/lib/api/ots";
+import type { Cotizacion } from "@/lib/api/cotizaciones";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useOTStore } from "@/lib/ot-store";
 import { useUsuarios } from "@/hooks/useUsuarios";
+import { useCotizaciones, useCrearCotizacion } from "@/hooks/useCotizaciones";
+import { useDebounced } from "@/hooks/useDebounced";
 import {
   useActualizarEtapa,
   useActualizarOt,
@@ -58,6 +64,7 @@ import {
   useOt,
   useQuitarColaborador,
   useSubirAdjunto,
+  useVincularCotizacion,
 } from "@/hooks/useOts";
 import { cn, inicialesDeNombre } from "@/lib/utils";
 import type { EstadoOt as EstadoOtBackend, Prioridad as PrioridadBackend } from "@/lib/labels";
@@ -236,6 +243,148 @@ function CadenaResponsablesOt({ tramos }: { tramos: TramoResponsable[] }) {
   );
 }
 
+const hoyISO = () => new Date().toISOString().slice(0, 10);
+
+/** Crea una cotización nueva ya ligada a esta OT (POST /cotizaciones con `otId` fijo). El
+ * `clienteId` no se pide: el backend lo autocompleta solo con el de la OT si no es interna, y no
+ * lo exige si lo es (docs/api.md, "POST /cotizaciones · gestion, admin"). */
+function DialogoCrearCotizacion({
+  abierto,
+  onAbrir,
+  otId,
+  onCrear,
+}: {
+  abierto: boolean;
+  onAbrir: (v: boolean) => void;
+  otId: string;
+  onCrear: (datos: { otId: string; montoClp: number; fecha: string; esPrincipal: boolean }) => void;
+}) {
+  const [monto, setMonto] = useState("");
+  const [fecha, setFecha] = useState(hoyISO());
+  const [esPrincipal, setEsPrincipal] = useState(false);
+
+  useEffect(() => {
+    if (!abierto) return;
+    setMonto("");
+    setFecha(hoyISO());
+    setEsPrincipal(false);
+  }, [abierto]);
+
+  const montoNumerico = Number(monto);
+  const montoValido = monto.trim() !== "" && Number.isInteger(montoNumerico) && montoNumerico >= 0;
+
+  return (
+    <Dialog open={abierto} onOpenChange={onAbrir}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Crear cotización</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs text-muted-foreground">Monto (CLP)</label>
+            <Input
+              value={monto}
+              onChange={(e) => setMonto(e.target.value)}
+              placeholder="Ej: 500000"
+              inputMode="numeric"
+              className="h-10"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs text-muted-foreground">Fecha</label>
+            <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-10" />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={esPrincipal} onCheckedChange={(v) => setEsPrincipal(v === true)} />
+            Es la cotización principal de esta OT
+          </label>
+          <Button
+            className="h-10 w-full"
+            disabled={!montoValido}
+            onClick={() => {
+              onCrear({ otId, montoClp: montoNumerico, fecha, esPrincipal });
+              onAbrir(false);
+            }}
+          >
+            <Plus className="size-4" /> Crear cotización
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Busca una cotización EXISTENTE (sin OT, o de otra OT) para vincularla a esta OT
+ * (POST /ots/:id/cotizaciones/vincular). Trae una página de /cotizaciones filtrada por texto y
+ * deja elegir con un clic — criterio simple, sin un componente de búsqueda nuevo. */
+function DialogoVincularCotizacion({
+  abierto,
+  onAbrir,
+  otId,
+  onVincular,
+}: {
+  abierto: boolean;
+  onAbrir: (v: boolean) => void;
+  otId: string;
+  onVincular: (cotizacionId: string) => void;
+}) {
+  const [texto, setTexto] = useState("");
+  const textoDebounced = useDebounced(texto);
+  const { data, isLoading } = useCotizaciones({ q: textoDebounced.trim() || undefined, perPage: 20 });
+
+  useEffect(() => {
+    if (!abierto) setTexto("");
+  }, [abierto]);
+
+  // No tiene sentido ofrecer una cotización que ya pertenece a esta misma OT.
+  const candidatas = (data?.items ?? []).filter((c: Cotizacion) => c.ot?.id !== otId);
+
+  return (
+    <Dialog open={abierto} onOpenChange={onAbrir}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Vincular cotización existente</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            placeholder="Buscar por número o cliente…"
+            className="h-10"
+          />
+          <ul className="max-h-72 space-y-1.5 overflow-y-auto">
+            {isLoading && <li className="py-4 text-center text-sm text-muted-foreground">Buscando…</li>}
+            {!isLoading && candidatas.length === 0 && (
+              <li className="py-4 text-center text-sm text-muted-foreground">Ninguna cotización coincide.</li>
+            )}
+            {!isLoading &&
+              candidatas.map((c) => (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onVincular(c.id);
+                      onAbrir(false);
+                    }}
+                    className="flex w-full flex-wrap items-center gap-2 rounded-md border border-border p-2.5 text-left text-sm transition-colors hover:bg-accent/50"
+                  >
+                    <span className="font-mono text-xs">{c.numero}</span>
+                    <span className="text-xs text-muted-foreground">{c.cliente?.nombre ?? "— sin cliente"}</span>
+                    <span className="font-mono text-xs">{formatoMoneda(c.montoClp)}</span>
+                    <EstadoCotizacionBadge estado={c.estado} />
+                    <span className="ml-auto text-[11px] text-muted-foreground">
+                      {c.ot ? `ya en ${c.ot.numero}` : "sin OT"}
+                    </span>
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function OTDetail() {
   const { otSeleccionadaId, abrirOT } = useOTStore();
   const { usuario: usuarioActual } = useAuth();
@@ -253,6 +402,8 @@ export function OTDetail() {
   const actualizarEtapa = useActualizarEtapa();
   const eliminarEtapa = useEliminarEtapa();
   const subirAdjunto = useSubirAdjunto();
+  const crearCotizacion = useCrearCotizacion();
+  const vincularCotizacion = useVincularCotizacion();
 
   const [horas, setHoras] = useState("");
   const [descripcionHora, setDescripcionHora] = useState("");
@@ -261,10 +412,15 @@ export function OTDetail() {
   const [editandoEtapas, setEditandoEtapas] = useState(false);
   const [guardandoEtapas, setGuardandoEtapas] = useState(false);
   const [derivar, setDerivar] = useState(false);
+  const [crearCotDialog, setCrearCotDialog] = useState(false);
+  const [vincularCotDialog, setVincularCotDialog] = useState(false);
   const [borrador, setBorrador] = useState<EtapaBorrador[]>([]);
   const [subiendoAdjunto, setSubiendoAdjunto] = useState(false);
   const inputArchivoRef = useRef<HTMLInputElement>(null);
   const etapasOT = ot?.etapas ?? [];
+  // Cotizaciones (Fase 2): escribir es exclusivo de gestion/admin, sin excepción por fila
+  // (a diferencia de OT) — se oculta el flujo entero para tecnico/lectura.
+  const puedeEscribirCot = !!usuarioActual && puedeEscribirCotizaciones(usuarioActual.rol);
 
   useEffect(() => {
     setEditandoEtapas(false);
@@ -562,15 +718,20 @@ export function OTDetail() {
                 ) : (
                   <p className="mt-3 text-sm text-muted-foreground">Sin cotización vinculada.</p>
                 )}
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Button size="sm" className="h-9" disabled title="Disponible en la próxima fase">
-                    <Plus className="size-4" /> Crear cotización
-                  </Button>
-                  <Button size="sm" variant="outline" className="h-9" disabled title="Disponible en la próxima fase">
-                    Vincular cotización existente
-                  </Button>
-                  <span className="text-[11px] text-muted-foreground">Disponible en la próxima fase.</span>
-                </div>
+                {puedeEscribirCot ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Button size="sm" className="h-9" onClick={() => setCrearCotDialog(true)}>
+                      <Plus className="size-4" /> Crear cotización
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-9" onClick={() => setVincularCotDialog(true)}>
+                      Vincular cotización existente
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-[11px] text-muted-foreground">
+                    Solo gestión o administración pueden crear o vincular cotizaciones.
+                  </p>
+                )}
               </section>
 
               <Separator />
@@ -855,6 +1016,22 @@ export function OTDetail() {
           derivarOt.mutate({ id: ot.id, destinoId, motivo, mantenerComoColaborador: mantenerColaborador });
         }}
       />
+      {ot && (
+        <>
+          <DialogoCrearCotizacion
+            abierto={crearCotDialog}
+            onAbrir={setCrearCotDialog}
+            otId={ot.id}
+            onCrear={(datos) => crearCotizacion.mutate(datos)}
+          />
+          <DialogoVincularCotizacion
+            abierto={vincularCotDialog}
+            onAbrir={setVincularCotDialog}
+            otId={ot.id}
+            onVincular={(cotizacionId) => vincularCotizacion.mutate({ id: ot.id, cotizacionId })}
+          />
+        </>
+      )}
     </>
   );
 }
