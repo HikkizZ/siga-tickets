@@ -1,0 +1,52 @@
+# Levanta el panel interno (backend + worker + frontend) en modo desarrollo, contra el SQL Server
+# que ya corre en el host (localhost:1433) — no se toca ni se mueve esa base de datos real.
+# `host.docker.internal` la resuelve Docker Desktop en Windows automáticamente, sin config extra.
+#
+# Uso:
+#   docker compose up --build
+#   Frontend: http://localhost:8082
+#   Backend:  http://localhost:3002/api/v1
+#
+# Las credenciales de BD/JWT/etc. salen de backend/.env (nunca se hornean en la imagen ni se suben
+# al repo — backend/.dockerignore lo excluye). Solo DB_HOST se pisa acá porque "localhost" dentro
+# de un contenedor apunta al propio contenedor, no al host.
+services:
+  backend:
+    build: ./backend
+    container_name: siga-ot-backend
+    env_file: ./backend/.env
+    environment:
+      DB_HOST: host.docker.internal
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/storage:/app/storage
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    container_name: siga-ot-worker
+    env_file: ./backend/.env
+    environment:
+      DB_HOST: host.docker.internal
+    command: ["npm", "run", "worker"]
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/storage:/app/storage
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: siga-ot-frontend
+    environment:
+      VITE_API_URL: http://localhost:3002/api/v1
+    ports:
+      # Host 8082 (no 8080: choca con siga-log-monitor-frontend-1 en esta máquina) → Vite sigue
+      # escuchando en 8080 DENTRO del contenedor (npm run dev = vite dev, sin flag de puerto);
+      # cambiar el lado izquierdo del mapeo no cambia eso, así que el lado derecho debe seguir
+      # siendo 8080 para que el mapeo apunte a algo real.
+      - "8082:8080"
+    volumes:
+      - ./frontend/src:/app/src
+    restart: unless-stopped
