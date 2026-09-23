@@ -71,6 +71,9 @@ type Store = {
   guardarSla: (sla: SlaConfig) => void;
   guardarSlaRespuesta: (sla: SlaRespuestaConfig) => void;
   otSeleccionada: OT | null;
+  /** Id cruda de la OT abierta en el Sheet (Fase 1): los componentes de OT reales ya no leen
+   * `otSeleccionada` (viene del mock) — piden el detalle real a `useOt(otSeleccionadaId)`. */
+  otSeleccionadaId: string | null;
   abrirOT: (id: string | null) => void;
   ticketAbierto: string | null;
   abrirTicket: (id: string | null) => void;
@@ -204,6 +207,7 @@ export function OTProvider({ children }: { children: ReactNode }) {
       guardarSla: setSla,
       guardarSlaRespuesta: setSlaRespuesta,
       otSeleccionada: ots.find((o) => o.id === seleccionada) ?? null,
+      otSeleccionadaId: seleccionada,
       abrirOT: setSeleccionada,
       ticketAbierto,
       abrirTicket: setTicketAbierto,

@@ -2,10 +2,17 @@ import { CalendarRange, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { Etapa } from "@/lib/mock-data";
 
-export function nuevaEtapa(inicio: string, fin: string): Etapa {
-  return { id: `et-${Math.random().toString(36).slice(2, 8)}`, nombre: "", inicio, fin };
+// Etapa en edición (Fase 1): mismos nombres de campo que el backend (docs/api.md,
+// GET/POST /ots/:id/etapas) para no traducir ida y vuelta. Las etapas nuevas (sin guardar) usan
+// un id con prefijo "et-" — nunca colisiona con un uuid real — para que OTDetail sepa si debe
+// crearlas o actualizarlas al guardar.
+export type EtapaBorrador = { id: string; nombre: string; fechaInicio: string; fechaTermino: string };
+
+export const esEtapaNueva = (id: string) => id.startsWith("et-");
+
+export function nuevaEtapa(fechaInicio: string, fechaTermino: string): EtapaBorrador {
+  return { id: `et-${Math.random().toString(36).slice(2, 8)}`, nombre: "", fechaInicio, fechaTermino };
 }
 
 export function EtapasEditor({
@@ -14,12 +21,12 @@ export function EtapasEditor({
   fechaInicioPorDefecto,
   fechaFinPorDefecto,
 }: {
-  etapas: Etapa[];
-  onChange: (etapas: Etapa[]) => void;
+  etapas: EtapaBorrador[];
+  onChange: (etapas: EtapaBorrador[]) => void;
   fechaInicioPorDefecto: string;
   fechaFinPorDefecto: string;
 }) {
-  const actualizar = (id: string, campo: keyof Etapa, valor: string) =>
+  const actualizar = (id: string, campo: keyof EtapaBorrador, valor: string) =>
     onChange(etapas.map((e) => (e.id === id ? { ...e, [campo]: valor } : e)));
 
   return (
@@ -52,8 +59,8 @@ export function EtapasEditor({
                 <Label className="text-[11px] text-muted-foreground">Inicio</Label>
                 <Input
                   type="date"
-                  value={et.inicio}
-                  onChange={(e) => actualizar(et.id, "inicio", e.target.value)}
+                  value={et.fechaInicio}
+                  onChange={(e) => actualizar(et.id, "fechaInicio", e.target.value)}
                   className="h-9 bg-card"
                 />
               </div>
@@ -61,8 +68,8 @@ export function EtapasEditor({
                 <Label className="text-[11px] text-muted-foreground">Término</Label>
                 <Input
                   type="date"
-                  value={et.fin}
-                  onChange={(e) => actualizar(et.id, "fin", e.target.value)}
+                  value={et.fechaTermino}
+                  onChange={(e) => actualizar(et.id, "fechaTermino", e.target.value)}
                   className="h-9 bg-card"
                 />
               </div>

@@ -1,23 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { GanttChartSquare, Inbox, Paperclip, Search, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import { AvataresEquipo, PrioridadBadge, SlaBadge } from "@/components/Prioridad";
-import { cn } from "@/lib/utils";
-import {
-  ESTADOS_OT,
-  clientes,
-  nivelSla,
-  formatoFecha,
-  getUsuario,
-  usuarioActual,
-  usuarios,
-  type OT,
-} from "@/lib/mock-data";
+import { Avatar, PrioridadBadge, SlaBadge } from "@/components/Prioridad";
+import { cn, inicialesDeNombre } from "@/lib/utils";
+import { formatoFecha } from "@/lib/mock-data";
+import { ESTADOS_OT, PRIORIDADES, etiquetaEstadoOt, etiquetaPrioridad } from "@/lib/labels";
+import { useOtsKanban } from "@/hooks/useOts";
+import type { OtKanbanItem } from "@/lib/api/ots";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { useOTStore } from "@/lib/ot-store";
+import { useUsuarios } from "@/hooks/useUsuarios";
+import { useClientes } from "@/hooks/useClientes";
+import { useDebounced } from "@/hooks/useDebounced";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -38,11 +36,30 @@ export const Route = createFileRoute("/")({
   component: Tablero,
 });
 
-function Tarjeta({ ot }: { ot: OT }) {
-  const { abrirOT, sla } = useOTStore();
-  const responsable = getUsuario(ot.responsableId);
-  const nivel = nivelSla(ot, sla);
-  const atrasada = nivel === "Vencida";
+function ClusterEquipo({ ot }: { ot: OtKanbanItem }) {
+  const extras = ot.colaboradores.items;
+  const restantes = ot.colaboradores.total - extras.length;
+  return (
+    <span
+      className="flex items-center"
+      title={[ot.responsable.nombre, ...extras.map((u) => u.nombre)].join(", ")}
+    >
+      <Avatar iniciales={inicialesDeNombre(ot.responsable.nombre)} className="ring-2 ring-card" />
+      {extras.map((u) => (
+        <Avatar key={u.id} iniciales={inicialesDeNombre(u.nombre)} className="-ml-2 bg-muted text-muted-foreground ring-2 ring-card" />
+      ))}
+      {restantes > 0 && (
+        <span className="-ml-2 flex size-6 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground ring-2 ring-card">
+          +{restantes}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function Tarjeta({ ot }: { ot: OtKanbanItem }) {
+  const { abrirOT } = useOTStore();
+  const atrasada = ot.slaEstado === "vencida";
 
   return (
     <article
@@ -50,69 +67,61 @@ function Tarjeta({ ot }: { ot: OT }) {
       className="cursor-pointer rounded-xl border border-border bg-card p-3.5 card-elev transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:card-elev-hover"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[11px] tracking-tight text-muted-foreground">{ot.id}</span>
+        <span className="font-mono text-[11px] tracking-tight text-muted-foreground">{ot.numero}</span>
         <PrioridadBadge prioridad={ot.prioridad} />
       </div>
       <h3 className="mt-2 text-sm font-semibold leading-snug tracking-tight">{ot.titulo}</h3>
-      <p className="mt-1 text-xs text-muted-foreground">{ot.cliente}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{ot.cliente?.nombre ?? ot.areaInterna ?? "Interno"}</p>
       <div className="mt-2">
-        <SlaBadge nivel={nivel} />
+        <SlaBadge nivel={ot.slaEstado} />
       </div>
       <div className="mt-3.5 flex items-center gap-2">
-        <AvataresEquipo responsableId={ot.responsableId} colaboradores={ot.colaboradores} />
-        <span className="text-xs text-muted-foreground">{responsable.nombre.split(" ")[0]}</span>
-        {ot.adjuntos.length > 0 && (
+        <ClusterEquipo ot={ot} />
+        <span className="text-xs text-muted-foreground">{ot.responsable.nombre.split(" ")[0]}</span>
+        {ot.adjuntosCount > 0 && (
           <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
             <Paperclip className="size-3.5" />
-            {ot.adjuntos.length}
+            {ot.adjuntosCount}
           </span>
         )}
-        <span
-          className={cn(
-            "flex items-center gap-1 font-mono text-[11px]",
-            ot.adjuntos.length > 0 ? "" : "ml-auto",
-            atrasada ? "font-semibold text-alta" : "text-muted-foreground",
-          )}
-        >
-          {atrasada && <TriangleAlert className="size-3.5" />}
-          {formatoFecha(ot.fechaEstimada)}
-        </span>
+        {ot.fechaEstimadaTermino && (
+          <span
+            className={cn(
+              "flex items-center gap-1 font-mono text-[11px]",
+              ot.adjuntosCount > 0 ? "" : "ml-auto",
+              atrasada ? "font-semibold text-alta" : "text-muted-foreground",
+            )}
+          >
+            {atrasada && <TriangleAlert className="size-3.5" />}
+            {formatoFecha(ot.fechaEstimadaTermino)}
+          </span>
+        )}
       </div>
     </article>
   );
 }
 
 function Tablero() {
-  const { ots } = useOTStore();
+  const { usuario } = useAuth();
   const [texto, setTexto] = useState("");
   const [prioridad, setPrioridad] = useState("todas");
   const [responsable, setResponsable] = useState("todos");
   const [cliente, setCliente] = useState("todos");
   const [misAsignados, setMisAsignados] = useState(false);
-  const [cargando, setCargando] = useState(true);
 
-  useEffect(() => {
-    const t = setTimeout(() => setCargando(false), 450);
-    return () => clearTimeout(t);
-  }, []);
+  const textoDebounced = useDebounced(texto);
+  const { data: usuarios } = useUsuarios();
+  const { data: clientes } = useClientes();
 
-  const filtradas = useMemo(
-    () =>
-      ots.filter(
-        (ot) =>
-          (!misAsignados ||
-            ot.responsableId === usuarioActual.id ||
-            (ot.colaboradores ?? []).includes(usuarioActual.id)) &&
-          (prioridad === "todas" || ot.prioridad === prioridad) &&
-          (responsable === "todos" || ot.responsableId === responsable) &&
-          (cliente === "todos" || ot.cliente === cliente) &&
-          (texto.trim() === "" ||
-            `${ot.id} ${ot.titulo} ${ot.cliente} ${ot.descripcion}`
-              .toLowerCase()
-              .includes(texto.toLowerCase())),
-      ),
-    [ots, prioridad, responsable, cliente, texto, misAsignados],
-  );
+  const { data: columnas, isLoading } = useOtsKanban({
+    q: textoDebounced.trim() || undefined,
+    prioridad: prioridad === "todas" ? undefined : (prioridad as (typeof PRIORIDADES)[number]),
+    responsableId: responsable === "todos" ? undefined : responsable,
+    clienteId: cliente === "todos" ? undefined : cliente,
+    mios: misAsignados || undefined,
+  });
+
+  const totalFiltradas = (columnas ?? []).reduce((s, c) => s + c.total, 0);
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] min-w-0 flex-col">
@@ -128,24 +137,24 @@ function Tablero() {
         </div>
         <Select value={prioridad} onValueChange={setPrioridad}>
           <SelectTrigger className="h-9 w-36 text-sm">
-            <span>{prioridad === "todas" ? "Prioridad" : prioridad}</span>
+            <span>{prioridad === "todas" ? "Prioridad" : etiquetaPrioridad(prioridad as (typeof PRIORIDADES)[number])}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todas">Toda prioridad</SelectItem>
-            <SelectItem value="Alta">Alta</SelectItem>
-            <SelectItem value="Media">Media</SelectItem>
-            <SelectItem value="Baja">Baja</SelectItem>
+            {PRIORIDADES.map((p) => (
+              <SelectItem key={p} value={p}>
+                {etiquetaPrioridad(p)}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={responsable} onValueChange={setResponsable}>
           <SelectTrigger className="h-9 w-44 text-sm">
-            <span>
-              {responsable === "todos" ? "Responsable" : getUsuario(responsable).nombre}
-            </span>
+            <span>{responsable === "todos" ? "Responsable" : (usuarios?.find((u) => u.id === responsable)?.nombre ?? "Responsable")}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todo responsable</SelectItem>
-            {usuarios.map((u) => (
+            {(usuarios ?? []).map((u) => (
               <SelectItem key={u.id} value={u.id}>
                 {u.nombre}
               </SelectItem>
@@ -154,13 +163,13 @@ function Tablero() {
         </Select>
         <Select value={cliente} onValueChange={setCliente}>
           <SelectTrigger className="h-9 w-52 text-sm">
-            <span>{cliente === "todos" ? "Cliente" : cliente}</span>
+            <span>{cliente === "todos" ? "Cliente" : (clientes?.find((c) => c.id === cliente)?.nombre ?? "Cliente")}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todo cliente</SelectItem>
-            {clientes.map((c) => (
-              <SelectItem key={c} value={c}>
-                {c}
+            {(clientes ?? []).map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.nombre}
               </SelectItem>
             ))}
           </SelectContent>
@@ -169,12 +178,11 @@ function Tablero() {
           variant={misAsignados ? "default" : "outline"}
           className="h-9 text-sm"
           onClick={() => setMisAsignados((v) => !v)}
+          disabled={!usuario}
         >
           Mis asignados
         </Button>
-        <span className="ml-auto text-xs text-muted-foreground">
-          {filtradas.length} de {ots.length} OT
-        </span>
+        <span className="ml-auto text-xs text-muted-foreground">{totalFiltradas} OT</span>
         <Link
           to="/linea-de-tiempo"
           className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm transition-colors hover:bg-muted"
@@ -185,7 +193,8 @@ function Tablero() {
 
       <div className="flex min-w-0 flex-1 gap-3 overflow-x-auto p-4">
         {ESTADOS_OT.map((estado) => {
-          const items = filtradas.filter((o) => o.estado === estado);
+          const columna = columnas?.find((c) => c.estado === estado);
+          const items = columna?.ots ?? [];
           return (
             <section
               key={estado}
@@ -193,14 +202,14 @@ function Tablero() {
             >
               <header className="flex items-center justify-between px-3.5 py-3">
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                  {estado}
+                  {etiquetaEstadoOt(estado)}
                 </h2>
                 <span className="rounded-full bg-card px-2 py-0.5 font-mono text-[11px] text-muted-foreground card-elev">
-                  {items.length}
+                  {columna?.total ?? 0}
                 </span>
               </header>
               <div className="flex flex-1 flex-col gap-2.5 overflow-y-auto px-2.5 pb-3">
-                {cargando ? (
+                {isLoading ? (
                   <>
                     <Skeleton className="h-28 rounded-xl" />
                     <Skeleton className="h-28 rounded-xl" />
@@ -208,10 +217,10 @@ function Tablero() {
                 ) : (
                   items.map((ot) => <Tarjeta key={ot.id} ot={ot} />)
                 )}
-                {!cargando && items.length === 0 && (
+                {!isLoading && items.length === 0 && (
                   <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-8 text-center">
                     <Inbox className="size-4 text-muted-foreground" />
-                    <p className="text-xs font-medium">Nada en “{estado}”</p>
+                    <p className="text-xs font-medium">Nada en "{etiquetaEstadoOt(estado)}"</p>
                     <p className="text-[11px] leading-snug text-muted-foreground">
                       Cambia el estado desde el detalle de una OT para que aparezca acá.
                     </p>

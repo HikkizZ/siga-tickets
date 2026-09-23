@@ -94,6 +94,31 @@ async function ejecutar<T>(baseUrl: string, ruta: string, opciones: OpcionesPeti
 
 type OpcionesLlamada = Omit<OpcionesPeticion, "method" | "body">;
 
+// POST multipart/form-data (adjuntos, docs/api.md sección "Adjuntos"): el body no es JSON, así
+// que no puede pasar por `ejecutar` (que siempre fija Content-Type: application/json).
+async function ejecutarForm<T>(
+  baseUrl: string,
+  ruta: string,
+  formData: FormData,
+  opciones: Pick<OpcionesPeticion, "signal"> = {},
+): Promise<Respuesta<T>> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(`${baseUrl}${ruta}`, {
+    method: "POST",
+    headers,
+    body: formData,
+    ...(opciones.signal ? { signal: opciones.signal } : {}),
+  });
+
+  const renovado = res.headers.get("X-Renewed-Token");
+  if (renovado) setToken(renovado);
+
+  return interpretarRespuesta<T>(res);
+}
+
 /** Cliente autenticado contra /api/v1. Adjunta el JWT salvo que se pase `auth: false`. */
 export const apiClient = {
   get: <T>(ruta: string, opciones?: OpcionesLlamada) => ejecutar<T>(API_URL, ruta, { ...opciones, method: "GET" }),
@@ -105,6 +130,8 @@ export const apiClient = {
     ejecutar<T>(API_URL, ruta, { ...opciones, method: "PUT", body }),
   delete: <T>(ruta: string, opciones?: OpcionesLlamada) =>
     ejecutar<T>(API_URL, ruta, { ...opciones, method: "DELETE" }),
+  postForm: <T>(ruta: string, formData: FormData, opciones?: Pick<OpcionesPeticion, "signal">) =>
+    ejecutarForm<T>(API_URL, ruta, formData, opciones),
 };
 
 type OpcionesLlamadaPublica = Omit<OpcionesLlamada, "auth"> & { portalToken?: string };

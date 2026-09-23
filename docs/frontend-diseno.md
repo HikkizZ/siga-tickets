@@ -30,7 +30,7 @@ Confirmado antes de tocar nada: `npm install` limpio (414 paquetes, 0 vulnerabil
 ## Estado
 
 - **Fase 0**: hecha (2026-09-22). Detalle abajo.
-- **Fase 1**: pendiente.
+- **Fase 1**: hecha (2026-09-23). Detalle abajo.
 
 ## Fase 0 — qué quedó
 
@@ -119,3 +119,178 @@ falta otro admin activo para eso). Queda activo en `siga-tickets` con una contra
 ya no está en ningún lado (ni en este repo ni en ningún archivo temporal); si se quiere, el admin
 real puede desactivarlo desde `PATCH /usuarios/:id`. Backend y frontend quedaron **detenidos** al
 terminar (no corriendo).
+
+## Fase 1 — qué quedó
+
+Archivos nuevos:
+
+- `src/lib/api/ots.ts` — funciones de red puras para OT (mismo patrón que `usuarios.ts`/`clientes.ts`):
+  tipos `OtListItem`, `OtKanbanItem`/`OtKanbanColumna`, `OtDetalle` (con `cadenaResponsables`,
+  `etapas`, `horas`, `comentarios`, `adjuntos`, `eventos`, `cotizaciones`, `tickets` embebidos tal
+  cual los documenta `docs/api.md`), y una función por endpoint: `obtenerOts`, `obtenerOtsKanban`,
+  `obtenerOt`, `crearOt`, `actualizarOt`, `cambiarEstadoOt`, `derivarOt`, `agregarColaborador`/
+  `quitarColaborador`, `agregarComentario`, `agregarHora`/`quitarHora`, `crearEtapa`/`actualizarEtapa`/
+  `eliminarEtapa`, `subirAdjunto` (multipart) y `descargarAdjunto` (fetch + blob autenticado, ver
+  más abajo).
+- `src/hooks/useOts.ts` — un hook de TanStack Query por operación (`useOtsKanban`, `useOts`, `useOt`,
+  y una mutación por cada función de red de arriba). Todas las mutaciones invalidan el árbol
+  completo bajo la clave `["ots"]` al terminar (cubre detalle + lista + kanban de una vez, más
+  simple que invalidar query por query) y muestran `toast.error(mensaje real del backend)` si
+  fallan; `useDerivarOt` además confirma con un `toast.success` breve.
+- `src/hooks/useDebounced.ts` — debounce genérico (300 ms), usado por el filtro de texto del
+  Tablero y de Todas las OT para no pegarle a `GET /ots`/`GET /ots/kanban` en cada tecla.
+
+Editados:
+
+- `src/lib/api/client.ts` — se agregó `apiClient.postForm` (multipart/form-data, para
+  `POST /adjuntos`); reutiliza `interpretarRespuesta`/el manejo de `X-Renewed-Token` que ya tenía
+  `ejecutar`, solo cambia cómo arma el `fetch` (sin `Content-Type` manual, `FormData` como body).
+- `src/lib/labels.ts` — se agregaron los arreglos `ESTADOS_OT`, `CATEGORIAS_OT`, `ORIGENES_OT`,
+  `PRIORIDADES` (mismo orden que usa el backend) para poblar los `<select>` de Fase 1 sin repetir
+  la lista de valores en cada componente. El resto del archivo (traductores) no cambió.
+- `src/lib/ot-store.tsx` — un solo campo nuevo en el `Store`: `otSeleccionadaId` (la id cruda de la
+  OT abierta en el Sheet, ya la guardaba internamente como `seleccionada`, solo se expuso). Los
+  componentes de OT reales ya no leen `otSeleccionada` (el objeto mock) — piden el detalle real a
+  `useOt(otSeleccionadaId)`. `abrirOT`/`ticketAbierto`/tickets/cotizaciones/SLA/notificaciones
+  siguen exactamente igual, y `TicketDetail.tsx`/`AppShell.tsx`/etc. (fuera de esta fase) no se
+  tocaron.
+- `src/lib/utils.ts` — se agregó `inicialesDeNombre(nombre)` (iniciales desde un nombre completo);
+  lo necesitan los avatares de usuarios reales, que a diferencia del mock no traen `iniciales`
+  precalculadas.
+- `src/components/Prioridad.tsx` — `PrioridadBadge`, `SlaBadge` y `EstadoCotizacionBadge` ahora
+  normalizan su prop (`"Alta"` o `"alta"`, `"En plazo"` o `"en_plazo"`, etc.) a la clave del backend
+  antes de buscar estilo/etiqueta, así aceptan tanto los valores mock (tickets, cotizaciones,
+  dashboard — fuera de esta fase) como los reales (OT, desde ahora) sin que ningún llamador tenga
+  que adaptarse. `Avatar`/`AvataresEquipo` no se tocaron (`AvataresEquipo` sigue siendo mock-only;
+  el Tablero/Todas las OT ahora arman su propio cluster de avatares con datos reales, ver abajo).
+- `src/components/EtapasEditor.tsx` — se renombraron los campos de la etapa en edición de
+  `inicio`/`fin` a `fechaInicio`/`fechaTermino` (mismo nombre que el backend, sin capa de traducción)
+  y se agregó `esEtapaNueva(id)` (por el prefijo `"et-"` del id temporal) para que OTDetail sepa qué
+  etapas crear vs. actualizar al guardar. Solo lo usan `nueva-ot.tsx` y `OTDetail.tsx`.
+- `src/components/SelectorColaboradores.tsx` — dejó de importar el arreglo mock `usuarios`: ahora
+  recibe la lista de candidatos por prop (`opciones`), que le pasan `nueva-ot.tsx`/`OTDetail.tsx`
+  desde `useUsuarios()` real. Solo lo usan esos dos archivos, así que el cambio de forma no afecta
+  nada fuera de esta fase.
+- `src/components/Derivacion.tsx` — `DialogoDerivar` ganó una prop opcional `opciones`: si no se
+  pasa, se comporta exactamente igual que antes (usuarios del mock, que sigue usando
+  `TicketDetail.tsx`); `OTDetail.tsx` la pasa con la lista real. `CadenaResponsables` (el cálculo
+  mock de tramos) no se tocó — `OTDetail.tsx` no lo usa, arma su propia lectura de
+  `cadenaResponsables` (ya viene calculada por el backend) en un componente local
+  (`CadenaResponsablesOt`, no exportado).
+- `src/components/OTDetail.tsx` — reescrito para leer `useOt(otSeleccionadaId)` en vez del mock:
+  estado/prioridad editables (`POST /ots/:id/estado`, `PATCH /ots/:id`), colaboradores (diff
+  add/remove contra `POST`/`DELETE /ots/:id/colaboradores`), derivar, horas, comentarios (interno/
+  visible cliente), etapas (alta/edición/baja reales, ver "Planificación" abajo), adjuntos (listar +
+  subir + descargar), cotización (solo lectura del arreglo embebido, botones deshabilitados),
+  tickets vinculados (solo lectura, reemplaza "Correos vinculados") e historial de actividad
+  (traduce cada `tipo` de evento del backend a una frase, ver `textoEvento()`).
+- `src/routes/__root.tsx` — se montó `<Toaster />` (de `src/components/ui/sonner.tsx`, ya era
+  dependencia pero no estaba en el árbol) junto a `OTProvider`.
+- `src/routes/index.tsx` (Tablero) — usa `useOtsKanban(filtros)` con los filtros reales (`q`
+  debounced, `prioridad`, `responsableId`, `clienteId`, `mios`); las 6 columnas se recorren en el
+  orden fijo de `ESTADOS_OT` (labels.ts) buscando la columna correspondiente en la respuesta. Los
+  selects de Prioridad/Responsable/Cliente usan `PRIORIDADES` y `useUsuarios()`/`useClientes()`
+  reales. Sin drag & drop (no existía, no se agregó).
+- `src/routes/todas-las-ot.tsx` — usa `useOts(filtros)` con paginación real del servidor (ver
+  "Paginación" abajo) y los mismos filtros reales que el Tablero. Se quitaron las columnas
+  "Cotización" y "Horas" (ver decisión abajo) y el orden por click solo queda habilitado en las
+  columnas que el backend sabe ordenar (`numero`, `titulo`, `estado`, `prioridad`, `fechaIngreso`,
+  `fechaEstimadaTermino` — "responsable"/"cliente"/"sla" quedan sin botón de orden).
+- `src/routes/nueva-ot.tsx` — formulario contra valores reales del backend (`clienteId`,
+  `responsableId`, `colaboradorIds`, enums en minúscula). Ya no hay campo "Fecha de ingreso" (el
+  backend la fija él mismo al crear, no se acepta en el body). Al guardar: `POST /ots`, y si hay
+  etapas cargadas, un `POST /ots/:id/etapas` por cada una en paralelo; si alguna falla la OT igual
+  quedó creada (cada `useCrearEtapa` ya avisa por su cuenta con un toast) y se navega igual a su
+  detalle.
+
+Fuera de alcance, sin tocar (más allá de lo estrictamente necesario para dejar de leer mock donde
+correspondía): `mock-data.ts`, `ot-store.tsx` (salvo el campo `otSeleccionadaId`),
+`linea-de-tiempo.tsx`, `tickets.tsx`, `cotizaciones.tsx`, `dashboard.tsx`, `configuracion.tsx`,
+`mesa-de-ayuda/*`, `TicketDetail.tsx`.
+
+### Decisiones dentro del espacio permitido
+
+- **Paginación de "Todas las OT"**: 25 por página (razonable para el volumen esperado; hoy con 1 OT
+  real no se pudo probar una segunda página, pero el control "Anterior/Siguiente" y el cálculo de
+  `totalPaginas` sobre `meta.total` están implementados y listos).
+- **Columnas quitadas de "Todas las OT"**: "Cotización" y "Horas" del mock no tienen equivalente en
+  `GET /ots` (el listado no trae cotización vinculada ni total de horas — eso solo viene en
+  `GET /ots/:id`) — pedirlo por fila implicaría N llamadas extra a la API solo para una tabla, así
+  que se quitaron esas dos columnas en vez de inventar el dato o pagar ese costo.
+- **Línea de tiempo (`linea-de-tiempo.tsx`)**: se dejó 100% en mock, a propósito. `GET /ots/kanban`
+  (la misma query que arma el Tablero) no trae `fechaIngreso` — la línea de tiempo necesita ambas
+  fechas (ingreso y estimada) para dibujar la barra de cada OT, así que conectarla de verdad exigía
+  o bien pedir el detalle completo por cada OT (N+1) o agregar un filtro/campo nuevo al endpoint —
+  ninguna de las dos es "reutilizar la misma query sin esfuerzo adicional", así que se documenta acá
+  en vez de forzarlo.
+- **Descarga de adjuntos**: implementada (no quedó opcional). `GET /adjuntos/:id/descargar` exige el
+  header `Authorization`, así que `descargarAdjunto()` en `src/lib/api/ots.ts` hace `fetch` con el
+  token, arma un blob y dispara la descarga con un `<a>` temporal — confirmado en el recorrido real
+  (ver abajo).
+- **Filtro de usuarios inactivos/`sistema`**: `GET /usuarios` (Fase 0) devuelve también al usuario
+  técnico `sistema` (inactivo) y a cualquier usuario desactivado — el backend rechaza a ambos como
+  responsable/colaborador/destino de derivación (`400`). Los tres selectores de personas
+  (`SelectorColaboradores`, el `Select` de responsable en `nueva-ot.tsx`, y `DialogoDerivar` vía
+  `OTDetail.tsx`) filtran `activo && username !== "sistema"` antes de listar opciones, para no
+  ofrecer una opción que el backend va a rechazar.
+- **`GET /usuarios` es admin-only (RBAC del backend, no un bug de esta fase)**: un `tecnico`
+  logueado no puede listar usuarios, así que los selectores de responsable/colaboradores/derivar le
+  quedan vacíos (el backend igual acepta que se cree/edite una OT sin tocar esos campos — el
+  responsable por defecto es quien crea). Confirmado con `qa_felipe_tec_a` durante el recorrido;
+  mismo hallazgo que ya había dejado la Fase 0 con "Mi perfil".
+
+## Fase 1 — verificación
+
+`npx tsc --noEmit` limpio.
+
+Recorrido real en navegador (backend `npm run dev` contra la BD real `siga-tickets`, frontend
+`npm run dev` puerto 8080, MCP de navegador):
+
+1. Admin desechable nuevo por variables de entorno al script `seed.ts`
+   (`SEED_ADMIN_USERNAME=qa_felipe_admin_f1`, contraseña propia de un solo uso, nunca impresa ni
+   guardada en ningún archivo) y, con su token, dos usuarios `tecnico` reales vía `POST /usuarios`
+   (`qa_felipe_tec_a`, `qa_felipe_tec_b`).
+2. Con `qa_felipe_tec_a` (técnico): `/nueva-ot` carga con datos reales (`GET /clientes`), pero el
+   selector de responsable/colaboradores queda vacío porque `GET /usuarios` es admin-only (ver
+   decisión arriba) — RBAC del backend funcionando, no un bug. Se cambió a `qa_felipe_admin_f1` para
+   probar el flujo completo con los tres selectores de personas poblados.
+3. `/nueva-ot` con `qa_felipe_admin_f1`: se completó título, descripción, categoría, prioridad,
+   ubicación, cliente real (`Minera Los Andes`), solicitante, fecha estimada, responsable
+   (`qa_felipe_tec_a`), un colaborador (`qa_felipe_tec_b`) y una etapa ("Diagnóstico inicial") →
+   `Guardar OT` → `POST /ots` (201) + `POST /ots/:id/etapas` (201) → navegó a Todas las OT con el
+   detalle de la OT recién creada (OT-1041) abierto, mostrando cliente, responsable, colaborador,
+   cadena de responsables y planificación reales.
+4. Confirmada en el Tablero (columna "Ingresado", con avatares, SLA "En plazo" y contador de
+   adjuntos) y en Todas las OT (misma fila, mismos datos).
+5. Cambio de estado desde el detalle (`Ingresado` → `En ejecución`, `POST /ots/:id/estado`) →
+   confirmado que la tarjeta se movió de columna al volver al Tablero.
+6. Cambio de prioridad (`Media` → `Alta`, `PATCH /ots/:id`) → el campo "Vencimiento SLA" se
+   recalculó en pantalla (de `02-oct` a `25-sept`), confirmando que el backend recalcula el SLA al
+   cambiar prioridad, tal como documenta `api.md`.
+7. Hora trabajada agregada (`POST /ots/:id/horas`) → aparece en la tabla con "2.5 h en total".
+8. Comentario interno y comentario visible para el cliente agregados (`POST /ots/:id/comentarios`)
+   → ambos aparecen con el badge correcto ("Interna" / "Visible para el cliente"), más recientes
+   primero.
+9. Adjunto real subido — el selector de archivo nativo del SO no se puede automatizar desde el MCP
+   de navegador, así que se subió con `curl -F` contra el mismo endpoint (`POST /adjuntos`,
+   `entidadTipo=ot`) que usa `useSubirAdjunto`; se confirmó en pantalla que el detalle lo lista con
+   el ícono genérico correcto (mime `text/plain`), el peso en bytes, y que el botón de descarga
+   funciona (`GET /adjuntos/:id/descargar` → 200, blob descargado vía `fetch` autenticado).
+10. Derivación: primero un intento con motivo de 5 caracteres → `400 VALIDATION_ERROR` real del
+    backend ("Datos inválidos") mostrado en el toast de error (confirmado también contra el cuerpo
+    de la respuesta de red, no un mensaje genérico). Luego derivación válida a `qa_felipe_tec_b`
+    con "mantenerme como colaborador" activo → responsable actual cambió, `qa_felipe_tec_a` (el
+    responsable anterior) pasó a colaborador, y la cadena de responsables mostró los dos tramos con
+    su duración y motivo.
+11. Filtro "Mis asignados" en Todas las OT probado con `qa_felipe_admin_f1` (que no es responsable
+    ni colaborador de la OT) → 0 resultados, confirmando que `mios=true` llega de verdad al backend
+    y no es un filtro local.
+12. Consola del navegador sin excepciones no controladas durante todo el recorrido; los únicos
+    `error` registrados son los 403 esperados del paso 2 (RBAC) y el 400 esperado del paso 10
+    (motivo corto).
+
+Al terminar: `qa_felipe_tec_a` y `qa_felipe_tec_b` quedaron desactivados
+(`PATCH /usuarios/:id {activo:false}`, ambos `200`). El admin de prueba `qa_felipe_admin_f1`
+**no** se pudo desactivar a sí mismo (`409 CONFLICT`, mismo bloqueo que ya documentó la Fase 0);
+queda activo en `siga-tickets` con una contraseña de un solo uso que no quedó en ningún archivo del
+repo ni de logs. Backend y frontend quedaron **detenidos** al terminar (no corriendo).

@@ -13,6 +13,7 @@ import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AppShell } from "@/components/AppShell";
 import { RouteGuard } from "@/components/RouteGuard";
+import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/lib/auth/AuthProvider";
 import { OTProvider } from "@/lib/ot-store";
 
@@ -142,6 +143,7 @@ function RootComponent() {
               <Outlet />
             </AppShell>
           </RouteGuard>
+          <Toaster />
         </OTProvider>
       </AuthProvider>
     </QueryClientProvider>

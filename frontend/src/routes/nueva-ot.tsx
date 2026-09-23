@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { ArrowLeft, Save } from "lucide-react";
-import { EtapasEditor } from "@/components/EtapasEditor";
+import { EtapasEditor, type EtapaBorrador } from "@/components/EtapasEditor";
 import { SelectorColaboradores } from "@/components/SelectorColaboradores";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,18 +9,23 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { areas } from "@/lib/mock-data";
 import {
-  CATEGORIAS_TRABAJO,
-  ORIGENES_TICKET,
-  areas,
-  clientes,
-  usuarioActual,
-  usuarios,
-  type CategoriaTrabajo,
-  type Etapa,
-  type OrigenTicket,
+  CATEGORIAS_OT,
+  ORIGENES_OT,
+  PRIORIDADES,
+  etiquetaCategoriaOt,
+  etiquetaOrigenOt,
+  etiquetaPrioridad,
+  etiquetaRol,
+  type CategoriaOt,
+  type OrigenOt,
   type Prioridad,
-} from "@/lib/mock-data";
+} from "@/lib/labels";
+import { useAuth } from "@/lib/auth/AuthProvider";
+import { useClientes } from "@/hooks/useClientes";
+import { useUsuarios } from "@/hooks/useUsuarios";
+import { useCrearEtapa, useCrearOt } from "@/hooks/useOts";
 import { useOTStore } from "@/lib/ot-store";
 
 export const Route = createFileRoute("/nueva-ot")({
@@ -42,15 +47,7 @@ export const Route = createFileRoute("/nueva-ot")({
   component: NuevaOT,
 });
 
-function Seccion({
-  titulo,
-  descripcion,
-  children,
-}: {
-  titulo: string;
-  descripcion: string;
-  children: React.ReactNode;
-}) {
+function Seccion({ titulo, descripcion, children }: { titulo: string; descripcion: string; children: React.ReactNode }) {
   return (
     <section className="rounded-xl border border-border bg-card p-5 card-elev sm:p-6">
       <h2 className="text-sm font-semibold tracking-tight">{titulo}</h2>
@@ -60,66 +57,93 @@ function Seccion({
   );
 }
 
+const hoyISO = () => new Date().toISOString().slice(0, 10);
+
 function NuevaOT() {
-  const { crearOT } = useOTStore();
+  const { usuario } = useAuth();
+  const { abrirOT } = useOTStore();
   const navigate = useNavigate();
+  const crearOt = useCrearOt();
+  const crearEtapa = useCrearEtapa();
+  const { data: clientes } = useClientes();
+  const { data: usuarios } = useUsuarios();
+
   const [titulo, setTitulo] = useState("");
   const [descripcion, setDescripcion] = useState("");
-  const [cliente, setCliente] = useState(clientes[0]!);
-  const [prioridad, setPrioridad] = useState<Prioridad>("Media");
-  const [responsableId, setResponsableId] = useState(usuarioActual.id);
-  const [fechaIngreso, setFechaIngreso] = useState("2026-09-10");
-  const [fechaEstimada, setFechaEstimada] = useState("2026-09-30");
-  const [origen, setOrigen] = useState<OrigenTicket>("Correo");
+  const [clienteId, setClienteId] = useState("");
+  const [prioridad, setPrioridad] = useState<Prioridad>("media");
+  const [responsableId, setResponsableId] = useState(usuario?.id ?? "");
+  const [fechaEstimadaTermino, setFechaEstimadaTermino] = useState("");
+  const [origen, setOrigen] = useState<OrigenOt>("correo");
   const [interna, setInterna] = useState(false);
   const [area, setArea] = useState(areas[0]!);
   const [solicitanteNombre, setSolicitanteNombre] = useState("");
   const [solicitanteContacto, setSolicitanteContacto] = useState("");
-  const [categoria, setCategoria] = useState<CategoriaTrabajo>("Mantención");
+  const [categoria, setCategoria] = useState<CategoriaOt>("mantencion");
   const [ubicacion, setUbicacion] = useState("");
-  const [etapas, setEtapas] = useState<Etapa[]>([]);
+  const [etapas, setEtapas] = useState<EtapaBorrador[]>([]);
   const [colaboradores, setColaboradores] = useState<string[]>([]);
+  const [guardando, setGuardando] = useState(false);
 
+  // El backend rechaza (400) a "sistema" o a un usuario inactivo como responsable/colaborador —
+  // GET /usuarios los incluye igual (ver docs/api.md), así que se filtran acá para no ofrecerlos.
+  const opcionesUsuarios = (usuarios ?? [])
+    .filter((u) => u.activo && u.username !== "sistema")
+    .map((u) => ({ id: u.id, nombre: u.nombre, cargo: u.cargo, rol: etiquetaRol(u.rol) }));
+
+  const alGuardar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!titulo.trim() || (!interna && !clienteId)) return;
+    setGuardando(true);
+    try {
+      const nuevaOt = await crearOt.mutateAsync({
+        titulo: titulo.trim(),
+        descripcion: descripcion.trim(),
+        categoria,
+        prioridad,
+        origen: interna ? "interna" : origen,
+        ...(ubicacion.trim() ? { ubicacion: ubicacion.trim() } : {}),
+        ...(solicitanteNombre.trim() ? { solicitanteNombre: solicitanteNombre.trim() } : {}),
+        ...(solicitanteContacto.trim() ? { solicitanteContacto: solicitanteContacto.trim() } : {}),
+        ...(fechaEstimadaTermino ? { fechaEstimadaTermino } : {}),
+        ...(responsableId ? { responsableId } : {}),
+        ...(colaboradores.length > 0 ? { colaboradorIds: colaboradores } : {}),
+        ...(interna ? { esInterna: true as const, areaInterna: area } : { esInterna: false as const, clienteId }),
+      });
+
+      const etapasValidas = etapas.filter((et) => et.nombre.trim() !== "");
+      if (etapasValidas.length > 0) {
+        await Promise.allSettled(
+          etapasValidas.map((et) =>
+            crearEtapa.mutateAsync({
+              id: nuevaOt.id,
+              etapa: { nombre: et.nombre.trim(), fechaInicio: et.fechaInicio, fechaTermino: et.fechaTermino },
+            }),
+          ),
+        );
+      }
+
+      // La OT ya quedó creada aunque alguna etapa haya fallado (cada mutación ya avisó por su
+      // cuenta con un toast con el error real del backend) — se navega igual a su detalle.
+      abrirOT(nuevaOt.id);
+      navigate({ to: "/todas-las-ot" });
+    } finally {
+      setGuardando(false);
+    }
+  };
 
   return (
     <div className="mx-auto w-full max-w-[1200px] p-4 sm:p-6 lg:px-8">
-      <Link
-        to="/todas-las-ot"
-        className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-      >
+      <Link to="/todas-las-ot" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="size-4" /> Volver a la tabla
       </Link>
       <h1 className="mt-4 text-2xl font-semibold tracking-tight">Nueva orden de trabajo</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Registra de dónde vino el ticket, quién lo pidió y, si quieres, su planificación. La OT queda en
-        estado “Ingresado”.
+        Registra de dónde vino el ticket, quién lo pidió y, si quieres, su planificación. La OT queda en estado
+        "Ingresado".
       </p>
 
-      <form
-        className="mt-6 space-y-5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!titulo.trim()) return;
-          crearOT({
-            titulo: titulo.trim(),
-            descripcion: descripcion.trim(),
-            cliente: interna ? `Interno · ${area}` : cliente,
-            prioridad,
-            responsableId,
-            fechaIngreso,
-            fechaEstimada,
-            origen,
-            esSolicitudInterna: interna,
-            ...(interna ? { area } : {}),
-            solicitanteNombre: solicitanteNombre.trim(),
-            solicitanteContacto: solicitanteContacto.trim(),
-            categoria,
-            ubicacion: ubicacion.trim(),
-            etapas: etapas.filter((et) => et.nombre.trim() !== ""),
-          });
-          navigate({ to: "/todas-las-ot" });
-        }}
-      >
+      <form className="mt-6 space-y-5" onSubmit={alGuardar}>
         <Seccion titulo="Trabajo solicitado" descripcion="Qué hay que hacer y con qué urgencia.">
           <div className="grid gap-5 lg:grid-cols-2">
             <div className="space-y-1.5 lg:col-span-2">
@@ -151,14 +175,14 @@ function NuevaOT() {
 
             <div className="space-y-1.5">
               <Label className="text-xs">Categoría de trabajo</Label>
-              <Select value={categoria} onValueChange={(v) => setCategoria(v as CategoriaTrabajo)}>
+              <Select value={categoria} onValueChange={(v) => setCategoria(v as CategoriaOt)}>
                 <SelectTrigger className="h-10 text-sm">
-                  <span>{categoria}</span>
+                  <span>{etiquetaCategoriaOt(categoria)}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  {CATEGORIAS_TRABAJO.map((c) => (
+                  {CATEGORIAS_OT.map((c) => (
                     <SelectItem key={c} value={c}>
-                      {c}
+                      {etiquetaCategoriaOt(c)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -168,12 +192,12 @@ function NuevaOT() {
               <Label className="text-xs">Prioridad</Label>
               <Select value={prioridad} onValueChange={(v) => setPrioridad(v as Prioridad)}>
                 <SelectTrigger className="h-10 text-sm">
-                  <span>{prioridad}</span>
+                  <span>{etiquetaPrioridad(prioridad)}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  {(["Alta", "Media", "Baja"] as Prioridad[]).map((p) => (
+                  {PRIORIDADES.map((p) => (
                     <SelectItem key={p} value={p}>
-                      {p}
+                      {etiquetaPrioridad(p)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -198,14 +222,14 @@ function NuevaOT() {
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs">Origen</Label>
-              <Select value={origen} onValueChange={(v) => setOrigen(v as OrigenTicket)}>
+              <Select value={origen} onValueChange={(v) => setOrigen(v as OrigenOt)} disabled={interna}>
                 <SelectTrigger className="h-10 text-sm">
-                  <span>{origen}</span>
+                  <span>{interna ? etiquetaOrigenOt("interna") : etiquetaOrigenOt(origen)}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  {ORIGENES_TICKET.map((o) => (
+                  {ORIGENES_OT.filter((o) => o !== "interna").map((o) => (
                     <SelectItem key={o} value={o}>
-                      {o}
+                      {etiquetaOrigenOt(o)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -215,14 +239,7 @@ function NuevaOT() {
               <Label htmlFor="interna" className="text-xs font-normal leading-snug">
                 ¿Es una solicitud interna?
               </Label>
-              <Switch
-                id="interna"
-                checked={interna}
-                onCheckedChange={(v) => {
-                  setInterna(v);
-                  if (v) setOrigen("Solicitud interna");
-                }}
-              />
+              <Switch id="interna" checked={interna} onCheckedChange={setInterna} />
             </div>
 
             {interna ? (
@@ -244,14 +261,14 @@ function NuevaOT() {
             ) : (
               <div className="space-y-1.5">
                 <Label className="text-xs">Cliente</Label>
-                <Select value={cliente} onValueChange={setCliente}>
+                <Select value={clienteId} onValueChange={setClienteId}>
                   <SelectTrigger className="h-10 text-sm">
-                    <span>{cliente}</span>
+                    <span>{clientes?.find((c) => c.id === clienteId)?.nombre ?? "Selecciona un cliente"}</span>
                   </SelectTrigger>
                   <SelectContent>
-                    {clientes.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
+                    {(clientes ?? []).map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.nombre}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -286,83 +303,58 @@ function NuevaOT() {
           </div>
         </Seccion>
 
-        <Seccion titulo="Asignación y fechas" descripcion="Responsable del trabajo y plazos comprometidos.">
-          <div className="grid gap-5 sm:grid-cols-3">
+        <Seccion titulo="Asignación y fechas" descripcion="Responsable del trabajo y plazo comprometido.">
+          <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs">Responsable</Label>
               <Select value={responsableId} onValueChange={setResponsableId}>
                 <SelectTrigger className="h-10 text-sm">
-                  <span>{usuarios.find((u) => u.id === responsableId)?.nombre}</span>
+                  <span>{opcionesUsuarios.find((u) => u.id === responsableId)?.nombre ?? "Selecciona un responsable"}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  {usuarios.map((u) => (
+                  {opcionesUsuarios.map((u) => (
                     <SelectItem key={u.id} value={u.id}>
                       {u.nombre} · {u.rol}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ingreso" className="text-xs">
-                Fecha de ingreso
-              </Label>
-              <Input
-                id="ingreso"
-                type="date"
-                value={fechaIngreso}
-                onChange={(e) => setFechaIngreso(e.target.value)}
-                className="h-10"
-              />
+              <p className="text-[11px] text-muted-foreground">Por defecto, quien la crea.</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="estimada" className="text-xs">
-                Fecha estimada
+                Fecha estimada de término (opcional)
               </Label>
               <Input
                 id="estimada"
                 type="date"
-                value={fechaEstimada}
-                onChange={(e) => setFechaEstimada(e.target.value)}
+                value={fechaEstimadaTermino}
+                onChange={(e) => setFechaEstimadaTermino(e.target.value)}
                 className="h-10"
               />
             </div>
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Colaboradores (opcional)</Label>
-            <SelectorColaboradores
-              valor={colaboradores}
-              onChange={setColaboradores}
-              excluir={responsableId}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Personas que apoyan el trabajo además del responsable.
-            </p>
+            <SelectorColaboradores valor={colaboradores} onChange={setColaboradores} opciones={opcionesUsuarios} excluir={responsableId} />
+            <p className="text-[11px] text-muted-foreground">Personas que apoyan el trabajo además del responsable.</p>
           </div>
         </Seccion>
 
-        <Seccion
-          titulo="Planificación (opcional)"
-          descripcion="Agrega etapas o hitos; se mostrarán como mini Gantt en el detalle de la OT."
-        >
+        <Seccion titulo="Planificación (opcional)" descripcion="Agrega etapas o hitos; se mostrarán como mini Gantt en el detalle de la OT.">
           <EtapasEditor
             etapas={etapas}
             onChange={setEtapas}
-            fechaInicioPorDefecto={fechaIngreso}
-            fechaFinPorDefecto={fechaEstimada}
+            fechaInicioPorDefecto={hoyISO()}
+            fechaFinPorDefecto={fechaEstimadaTermino || hoyISO()}
           />
         </Seccion>
 
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" className="h-10">
-            <Save className="size-4" /> Guardar OT
+          <Button type="submit" className="h-10" disabled={guardando}>
+            <Save className="size-4" /> {guardando ? "Guardando…" : "Guardar OT"}
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10"
-            onClick={() => navigate({ to: "/todas-las-ot" })}
-          >
+          <Button type="button" variant="outline" className="h-10" onClick={() => navigate({ to: "/todas-las-ot" })}>
             Cancelar
           </Button>
         </div>

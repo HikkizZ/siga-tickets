@@ -1,22 +1,19 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Plus, Search } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import { AvataresEquipo, PrioridadBadge, SlaBadge } from "@/components/Prioridad";
-import { cn } from "@/lib/utils";
-import {
-  clientes,
-  formatoFecha,
-  getUsuario,
-  nivelSla,
-  usuarioActual,
-  usuarios,
-  vencimientoSla,
-  type OT,
-  type SlaConfig,
-} from "@/lib/mock-data";
+import { Button } from "@/components/ui/button";
+import { Avatar, PrioridadBadge, SlaBadge } from "@/components/Prioridad";
+import { cn, inicialesDeNombre } from "@/lib/utils";
+import { formatoFecha } from "@/lib/mock-data";
+import { PRIORIDADES, etiquetaEstadoOt, etiquetaPrioridad } from "@/lib/labels";
+import { useOts } from "@/hooks/useOts";
+import type { OtsFiltros } from "@/lib/api/ots";
 import { useOTStore } from "@/lib/ot-store";
+import { useUsuarios } from "@/hooks/useUsuarios";
+import { useClientes } from "@/hooks/useClientes";
+import { useDebounced } from "@/hooks/useDebounced";
 
 export const Route = createFileRoute("/todas-las-ot")({
   head: () => ({
@@ -25,7 +22,7 @@ export const Route = createFileRoute("/todas-las-ot")({
       {
         name: "description",
         content:
-          "Tabla completa de órdenes de trabajo con estado, prioridad, responsable, fechas, horas y cotización vinculada.",
+          "Tabla completa de órdenes de trabajo con estado, prioridad, responsable, fechas y SLA.",
       },
       { property: "og:title", content: "Todas las OT · Taller OT" },
       {
@@ -37,18 +34,22 @@ export const Route = createFileRoute("/todas-las-ot")({
   component: TodasLasOT,
 });
 
-type Columna =
-  | "id"
-  | "titulo"
-  | "cliente"
-  | "estado"
-  | "prioridad"
-  | "responsable"
-  | "fechaIngreso"
-  | "fechaEstimada"
-  | "sla"
-  | "horas"
-  | "cotizacion";
+const PER_PAGE = 25;
+
+type Columna = "id" | "titulo" | "cliente" | "estado" | "prioridad" | "responsable" | "fechaIngreso" | "fechaEstimada" | "sla";
+
+// El backend solo acepta ordenar por estos campos (docs/api.md, GET /ots) — responsable, cliente
+// y SLA no están entre las columnas ordenables ahí, así que esas tres quedan sin botón de orden
+// (antes se ordenaban en el cliente sobre el arreglo completo; ahora la tabla está paginada por
+// el servidor, así que un orden "local" sobre una sola página daría un resultado engañoso).
+const ordenPorColumna: Partial<Record<Columna, NonNullable<OtsFiltros["orden"]>>> = {
+  id: "numero",
+  titulo: "titulo",
+  estado: "estado",
+  prioridad: "prioridad",
+  fechaIngreso: "fechaIngreso",
+  fechaEstimada: "fechaEstimadaTermino",
+};
 
 const columnas: { key: Columna; label: string; alineado?: string }[] = [
   { key: "id", label: "ID" },
@@ -60,58 +61,43 @@ const columnas: { key: Columna; label: string; alineado?: string }[] = [
   { key: "fechaIngreso", label: "Ingreso" },
   { key: "fechaEstimada", label: "Estimada" },
   { key: "sla", label: "SLA" },
-  { key: "horas", label: "Horas", alineado: "text-right" },
-  { key: "cotizacion", label: "Cotización" },
 ];
 
-const ordenPrioridad = { Alta: 0, Media: 1, Baja: 2 } as const;
-const ordenSla = { Vencida: 0, "Por vencer": 1, "En plazo": 2 } as const;
-
 function TodasLasOT() {
-  const { ots, abrirOT, sla } = useOTStore();
+  const { abrirOT } = useOTStore();
   const [texto, setTexto] = useState("");
   const [prioridad, setPrioridad] = useState("todas");
   const [responsable, setResponsable] = useState("todos");
   const [cliente, setCliente] = useState("todos");
-  const [orden, setOrden] = useState<{ col: Columna; asc: boolean }>({ col: "id", asc: true });
   const [misAsignados, setMisAsignados] = useState(false);
+  const [orden, setOrden] = useState<{ col: Columna; asc: boolean }>({ col: "id", asc: true });
+  const [page, setPage] = useState(1);
 
-  const valor = (ot: OT, col: Columna, cfg: SlaConfig): string | number => {
-    switch (col) {
-      case "sla":
-        return ordenSla[nivelSla(ot, cfg)];
-      case "prioridad":
-        return ordenPrioridad[ot.prioridad];
-      case "responsable":
-        return getUsuario(ot.responsableId).nombre;
-      case "horas":
-        return ot.horas.reduce((s, h) => s + h.horas, 0);
-      case "cotizacion":
-        return ot.cotizacionId ?? "";
-      default:
-        return ot[col];
-    }
+  const textoDebounced = useDebounced(texto);
+  const { data: usuarios } = useUsuarios();
+  const { data: clientes } = useClientes();
+
+  // Cambiar cualquier filtro u orden vuelve a la página 1 — si no, se podría quedar en una
+  // página fuera de rango del nuevo resultado.
+  useEffect(() => {
+    setPage(1);
+  }, [textoDebounced, prioridad, responsable, cliente, misAsignados, orden]);
+
+  const filtros: OtsFiltros = {
+    page,
+    perPage: PER_PAGE,
+    orden: ordenPorColumna[orden.col] ?? "fechaIngreso",
+    dir: orden.asc ? "asc" : "desc",
+    q: textoDebounced.trim() || undefined,
+    prioridad: prioridad === "todas" ? undefined : (prioridad as (typeof PRIORIDADES)[number]),
+    responsableId: responsable === "todos" ? undefined : responsable,
+    clienteId: cliente === "todos" ? undefined : cliente,
+    mios: misAsignados || undefined,
   };
-
-  const filas = useMemo(() => {
-    const filtradas = ots.filter(
-      (ot) =>
-        (!misAsignados ||
-          ot.responsableId === usuarioActual.id ||
-          (ot.colaboradores ?? []).includes(usuarioActual.id)) &&
-        (prioridad === "todas" || ot.prioridad === prioridad) &&
-        (responsable === "todos" || ot.responsableId === responsable) &&
-        (cliente === "todos" || ot.cliente === cliente) &&
-        (texto.trim() === "" ||
-          `${ot.id} ${ot.titulo} ${ot.cliente} ${ot.descripcion}`.toLowerCase().includes(texto.toLowerCase())),
-    );
-    return [...filtradas].sort((a, b) => {
-      const va = valor(a, orden.col, sla);
-      const vb = valor(b, orden.col, sla);
-      const cmp = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
-      return orden.asc ? cmp : -cmp;
-    });
-  }, [ots, prioridad, responsable, cliente, texto, orden, sla, misAsignados]);
+  const { data, isLoading } = useOts(filtros);
+  const filas = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const totalPaginas = Math.max(1, Math.ceil(total / PER_PAGE));
 
   return (
     <div className="p-4 sm:p-6">
@@ -140,22 +126,24 @@ function TodasLasOT() {
         </div>
         <Select value={prioridad} onValueChange={setPrioridad}>
           <SelectTrigger className="h-9 w-36 text-sm">
-            <span>{prioridad === "todas" ? "Prioridad" : prioridad}</span>
+            <span>{prioridad === "todas" ? "Prioridad" : etiquetaPrioridad(prioridad as (typeof PRIORIDADES)[number])}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todas">Toda prioridad</SelectItem>
-            <SelectItem value="Alta">Alta</SelectItem>
-            <SelectItem value="Media">Media</SelectItem>
-            <SelectItem value="Baja">Baja</SelectItem>
+            {PRIORIDADES.map((p) => (
+              <SelectItem key={p} value={p}>
+                {etiquetaPrioridad(p)}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={responsable} onValueChange={setResponsable}>
           <SelectTrigger className="h-9 w-44 text-sm">
-            <span>{responsable === "todos" ? "Responsable" : getUsuario(responsable).nombre}</span>
+            <span>{responsable === "todos" ? "Responsable" : (usuarios?.find((u) => u.id === responsable)?.nombre ?? "Responsable")}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todo responsable</SelectItem>
-            {usuarios.map((u) => (
+            {(usuarios ?? []).map((u) => (
               <SelectItem key={u.id} value={u.id}>
                 {u.nombre}
               </SelectItem>
@@ -164,13 +152,13 @@ function TodasLasOT() {
         </Select>
         <Select value={cliente} onValueChange={setCliente}>
           <SelectTrigger className="h-9 w-52 text-sm">
-            <span>{cliente === "todos" ? "Cliente" : cliente}</span>
+            <span>{cliente === "todos" ? "Cliente" : (clientes?.find((c) => c.id === cliente)?.nombre ?? "Cliente")}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todo cliente</SelectItem>
-            {clientes.map((c) => (
-              <SelectItem key={c} value={c}>
-                {c}
+            {(clientes ?? []).map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.nombre}
               </SelectItem>
             ))}
           </SelectContent>
@@ -179,85 +167,87 @@ function TodasLasOT() {
           onClick={() => setMisAsignados((v) => !v)}
           className={cn(
             "h-9 rounded-md border px-3 text-sm transition-colors",
-            misAsignados
-              ? "border-primary bg-primary text-primary-foreground"
-              : "border-border hover:bg-muted",
+            misAsignados ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted",
           )}
         >
           Mis asignados
         </button>
         <span className="text-xs text-muted-foreground sm:ml-auto">
-          {filas.length} de {ots.length} OT
+          {total} OT · página {page} de {totalPaginas}
         </span>
       </div>
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-card card-elev">
-        <table className="w-full min-w-[960px] text-sm">
+        <table className="w-full min-w-[860px] text-sm">
           <thead>
             <tr className="border-b border-border bg-secondary/60 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              {columnas.map((c) => (
-                <th key={c.key} className={cn("px-4 py-2.5 font-medium", c.alineado)}>
-                  <button
-                    onClick={() =>
-                      setOrden((o) => (o.col === c.key ? { col: c.key, asc: !o.asc } : { col: c.key, asc: true }))
-                    }
-                    className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
-                  >
-                    {c.label}
-                    {orden.col === c.key &&
-                      (orden.asc ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
-                  </button>
-                </th>
-              ))}
+              {columnas.map((c) => {
+                const clave = ordenPorColumna[c.key];
+                return (
+                  <th key={c.key} className={cn("px-4 py-2.5 font-medium", c.alineado)}>
+                    {clave ? (
+                      <button
+                        onClick={() => setOrden((o) => (o.col === c.key ? { col: c.key, asc: !o.asc } : { col: c.key, asc: true }))}
+                        className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
+                      >
+                        {c.label}
+                        {orden.col === c.key && (orden.asc ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
+                      </button>
+                    ) : (
+                      c.label
+                    )}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {filas.map((ot) => (
-              <tr
-                key={ot.id}
-                onClick={() => abrirOT(ot.id)}
-                className="cursor-pointer border-b border-border/70 transition-colors last:border-0 hover:bg-accent/45"
-              >
-                <td className="px-4 py-3 font-mono text-xs">{ot.id}</td>
-                <td className="max-w-72 truncate px-4 py-3">{ot.titulo}</td>
-                <td className="px-4 py-3">{ot.cliente}</td>
-                <td className="px-4 py-3">
-                  <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                    {ot.estado}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <PrioridadBadge prioridad={ot.prioridad} />
-                </td>
-                <td className="px-4 py-3">
-                  <span className="flex items-center gap-2">
-                    <AvataresEquipo responsableId={ot.responsableId} colaboradores={ot.colaboradores} />
-                    <span className="text-xs">{getUsuario(ot.responsableId).nombre}</span>
-                  </span>
-                </td>
-                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                  {formatoFecha(ot.fechaIngreso)}
-                </td>
-                <td
-                  className={cn(
-                    "px-4 py-3 font-mono text-xs",
-                    nivelSla(ot, sla) === "Vencida" ? "font-semibold text-alta" : "text-muted-foreground",
-                  )}
-                >
-                  {formatoFecha(ot.fechaEstimada)}
-                </td>
-                <td className="px-4 py-3" title={vencimientoSla(ot, sla).toLocaleString("es-CL")}>
-                  <SlaBadge nivel={nivelSla(ot, sla)} />
-                </td>
-                <td className="px-4 py-3 text-right font-mono text-xs">
-                  {ot.horas.reduce((s, h) => s + h.horas, 0)}
-                </td>
-                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                  {ot.cotizacionId ?? "—"}
+            {isLoading && (
+              <tr>
+                <td colSpan={columnas.length} className="px-4 py-14 text-center text-sm text-muted-foreground">
+                  Cargando…
                 </td>
               </tr>
-            ))}
-            {filas.length === 0 && (
+            )}
+            {!isLoading &&
+              filas.map((ot) => (
+                <tr
+                  key={ot.id}
+                  onClick={() => abrirOT(ot.id)}
+                  className="cursor-pointer border-b border-border/70 transition-colors last:border-0 hover:bg-accent/45"
+                >
+                  <td className="px-4 py-3 font-mono text-xs">{ot.numero}</td>
+                  <td className="max-w-72 truncate px-4 py-3">{ot.titulo}</td>
+                  <td className="px-4 py-3">{ot.cliente?.nombre ?? ot.areaInterna ?? "Interno"}</td>
+                  <td className="px-4 py-3">
+                    <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                      {etiquetaEstadoOt(ot.estado)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <PrioridadBadge prioridad={ot.prioridad} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="flex items-center gap-2">
+                      <Avatar iniciales={inicialesDeNombre(ot.responsable.nombre)} />
+                      <span className="text-xs">{ot.responsable.nombre}</span>
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{formatoFecha(ot.fechaIngreso)}</td>
+                  <td
+                    className={cn(
+                      "px-4 py-3 font-mono text-xs",
+                      ot.slaEstado === "vencida" ? "font-semibold text-alta" : "text-muted-foreground",
+                    )}
+                  >
+                    {ot.fechaEstimadaTermino ? formatoFecha(ot.fechaEstimadaTermino) : "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <SlaBadge nivel={ot.slaEstado} />
+                  </td>
+                </tr>
+              ))}
+            {!isLoading && filas.length === 0 && (
               <tr>
                 <td colSpan={columnas.length} className="px-4 py-14">
                   <div className="flex flex-col items-center gap-2 text-center">
@@ -275,6 +265,26 @@ function TodasLasOT() {
           </tbody>
         </table>
       </div>
+
+      {totalPaginas > 1 && (
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <Button size="sm" variant="outline" className="h-8" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+            <ChevronLeft className="size-4" /> Anterior
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Página {page} de {totalPaginas}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={page >= totalPaginas}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Siguiente <ChevronRight className="size-4" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

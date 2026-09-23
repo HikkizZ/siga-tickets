@@ -34,6 +34,15 @@ export const etiquetaEstadoOt = crearTraductor<EstadoOt>(
   },
   "EstadoOt",
 );
+// Orden fijo de columnas del kanban (mismo orden que devuelve GET /ots/kanban).
+export const ESTADOS_OT: readonly EstadoOt[] = [
+  "ingresado",
+  "en_cotizacion",
+  "aprobado",
+  "en_ejecucion",
+  "terminado",
+  "facturado",
+];
 
 export type CategoriaOt = "mantencion" | "instalacion" | "reparacion" | "cotizacion" | "soporte" | "otro";
 export const etiquetaCategoriaOt = crearTraductor<CategoriaOt>(
@@ -47,6 +56,14 @@ export const etiquetaCategoriaOt = crearTraductor<CategoriaOt>(
   },
   "CategoriaOt",
 );
+export const CATEGORIAS_OT: readonly CategoriaOt[] = [
+  "mantencion",
+  "instalacion",
+  "reparacion",
+  "cotizacion",
+  "soporte",
+  "otro",
+];
 
 export type OrigenOt = "mesa_ayuda" | "correo" | "telefono" | "presencial" | "interna";
 export const etiquetaOrigenOt = crearTraductor<OrigenOt>(
@@ -59,11 +76,13 @@ export const etiquetaOrigenOt = crearTraductor<OrigenOt>(
   },
   "OrigenOt",
 );
+export const ORIGENES_OT: readonly OrigenOt[] = ["mesa_ayuda", "correo", "telefono", "presencial", "interna"];
 
 // ---- Compartidos entre OT y tickets ----
 
 export type Prioridad = "alta" | "media" | "baja";
 export const etiquetaPrioridad = crearTraductor<Prioridad>({ alta: "Alta", media: "Media", baja: "Baja" }, "Prioridad");
+export const PRIORIDADES: readonly Prioridad[] = ["alta", "media", "baja"];
 
 export type SlaEstado = "en_plazo" | "por_vencer" | "vencida";
 export const etiquetaSlaEstado = crearTraductor<SlaEstado>(

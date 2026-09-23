@@ -24,6 +24,7 @@ export function DialogoDerivar({
   responsableActualId,
   conColaborador = false,
   onDerivar,
+  opciones,
 }: {
   abierto: boolean;
   onAbrir: (v: boolean) => void;
@@ -31,8 +32,13 @@ export function DialogoDerivar({
   responsableActualId?: string;
   conColaborador?: boolean;
   onDerivar: (datos: { destinoId: string; motivo: string; mantenerColaborador: boolean }) => void;
+  /** Fase 1: OTDetail pasa la lista real de usuarios (useUsuarios()) acá; sin esta prop se
+   * mantiene el comportamiento original (usuarios del mock), que sigue usando TicketDetail. */
+  opciones?: { id: string; nombre: string; rol?: string }[];
 }) {
-  const candidatos = usuarios.filter((u) => u.id !== responsableActualId);
+  const listaBase = opciones ?? usuarios;
+  const candidatos = listaBase.filter((u) => u.id !== responsableActualId);
+  const nombreDe = (id: string) => (opciones ? (opciones.find((u) => u.id === id)?.nombre ?? id) : getUsuario(id).nombre);
   const [destino, setDestino] = useState(candidatos[0]?.id ?? "");
   const [motivo, setMotivo] = useState("");
   const [mantener, setMantener] = useState(true);
@@ -56,12 +62,13 @@ export function DialogoDerivar({
             <Label className="text-xs">Derivar a</Label>
             <Select value={destino} onValueChange={setDestino}>
               <SelectTrigger className="h-10 text-sm">
-                <span>{destino ? getUsuario(destino).nombre : "Selecciona una persona"}</span>
+                <span>{destino ? nombreDe(destino) : "Selecciona una persona"}</span>
               </SelectTrigger>
               <SelectContent>
                 {candidatos.map((u) => (
                   <SelectItem key={u.id} value={u.id}>
-                    {u.nombre} · {u.rol}
+                    {u.nombre}
+                    {u.rol ? ` · ${u.rol}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
