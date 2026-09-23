@@ -1,6 +1,5 @@
 import { AlertTriangle, Clock, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getUsuario } from "@/lib/mock-data";
 import { etiquetaEstadoCotizacion, etiquetaPrioridad, etiquetaSlaEstado } from "@/lib/labels";
 
 // Estos tres badges reciben tanto valores del mock ("Alta", "En plazo", "Borrador" — tickets,
@@ -96,41 +95,6 @@ export function Avatar({ iniciales, className }: { iniciales: string; className?
       aria-hidden
     >
       {iniciales}
-    </span>
-  );
-}
-
-export function AvataresEquipo({
-  responsableId,
-  colaboradores = [],
-  className,
-}: {
-  responsableId: string;
-  colaboradores?: string[] | undefined;
-  className?: string;
-}) {
-  const responsable = getUsuario(responsableId);
-  const extras = colaboradores.filter((id) => id !== responsableId);
-  const visibles = extras.slice(0, 3);
-  const restantes = extras.length - visibles.length;
-
-  return (
-    <span className={cn("flex items-center", className)} title={
-      [responsable.nombre, ...extras.map((id) => getUsuario(id).nombre)].join(", ")
-    }>
-      <Avatar iniciales={responsable.iniciales} className="ring-2 ring-card" />
-      {visibles.map((id) => (
-        <Avatar
-          key={id}
-          iniciales={getUsuario(id).iniciales}
-          className="-ml-2 bg-muted text-muted-foreground ring-2 ring-card"
-        />
-      ))}
-      {restantes > 0 && (
-        <span className="-ml-2 flex size-6 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground ring-2 ring-card">
-          +{restantes}
-        </span>
-      )}
     </span>
   );
 }

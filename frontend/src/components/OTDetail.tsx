@@ -31,7 +31,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, EstadoCotizacionBadge, PrioridadBadge, SlaBadge } from "@/components/Prioridad";
-import { formatoFecha, formatoFechaHora, formatoMoneda, HOY } from "@/lib/mock-data";
+import { formatoFecha, formatoFechaHora, formatoMoneda } from "@/lib/mock-data";
 import {
   ESTADOS_OT,
   PRIORIDADES,
@@ -154,7 +154,7 @@ function MiniGantt({ etapas }: { etapas: { id: string; nombre: string; fechaInic
   const min = Math.min(...inicios);
   const max = Math.max(...fines);
   const total = Math.max(max - min, dia);
-  const hoy = ((HOY.getTime() - min) / total) * 100;
+  const hoy = ((Date.now() - min) / total) * 100;
 
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-border bg-secondary/40 p-3">

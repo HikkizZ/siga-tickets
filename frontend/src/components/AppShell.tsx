@@ -36,7 +36,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { formatoMoneda, nivelSla } from "@/lib/mock-data";
+import { formatoMoneda } from "@/lib/mock-data";
 import { useOTStore } from "@/lib/ot-store";
 import { OTDetail } from "@/components/OTDetail";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -45,6 +45,7 @@ import { useUsuarios } from "@/hooks/useUsuarios";
 import { useClientes } from "@/hooks/useClientes";
 import { useDebounced } from "@/hooks/useDebounced";
 import { useBuscar } from "@/hooks/useBuscar";
+import { useDashboard } from "@/hooks/useDashboard";
 import {
   useMarcarNotificacionLeida,
   useMarcarTodasNotificacionesLeidas,
@@ -195,8 +196,10 @@ function SidebarContenido({
   onToggle?: (() => void) | undefined;
   onNavigate?: (() => void) | undefined;
 }) {
-  const { ots, sla } = useOTStore();
-  const atrasadas = ots.filter((o) => nivelSla(o, sla) === "Vencida").length;
+  // otActivas/otConSlaVencido son "foto actual" en GET /dashboard (docs/api.md, Fase 6) — mismos
+  // dos números que ya mostraba este panel, ahora reales en vez de contar el arreglo mock entero
+  // (el mock ni siquiera filtraba "activas" de verdad: mostraba el total de OT, cerradas incluidas).
+  const { data: resumen } = useDashboard();
 
   return (
     <div className="flex h-full flex-col bg-nav text-nav-foreground">
@@ -214,10 +217,12 @@ function SidebarContenido({
       <Separator className="bg-nav-active" />
       <NavItems colapsado={colapsado} onNavigate={onNavigate} />
       <div className="mt-auto space-y-3 px-3 py-4">
-        {!colapsado && (
+        {!colapsado && resumen && (
           <div className="rounded-md bg-nav-active/60 px-3 py-2 text-[11px] text-nav-muted">
-            <p className="font-mono">{ots.length} OT activas</p>
-            {atrasadas > 0 && <p className="mt-1 text-alta-suave">{atrasadas} con SLA vencido</p>}
+            <p className="font-mono">{resumen.otActivas} OT activas</p>
+            {resumen.otConSlaVencido > 0 && (
+              <p className="mt-1 text-alta-suave">{resumen.otConSlaVencido} con SLA vencido</p>
+            )}
           </div>
         )}
         {onToggle && (

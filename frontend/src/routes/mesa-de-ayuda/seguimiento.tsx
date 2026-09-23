@@ -8,9 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { formatoFecha, type EstadoTicket as EstadoTicketMock } from "@/lib/mock-data";
+import { formatoFecha } from "@/lib/mock-data";
 import { ApiError } from "@/lib/api/client";
-import { etiquetaEstadoOt, etiquetaEstadoTicket } from "@/lib/labels";
+import { etiquetaEstadoOt } from "@/lib/labels";
 import { clearPortalToken, getPortalToken, setPortalToken } from "@/lib/portal/token";
 import {
   useAdjuntarArchivoPublico,
@@ -194,10 +194,7 @@ function Seguimiento() {
       <div className="mt-3 rounded-xl border border-border bg-card p-5 card-elev sm:p-6">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xs text-muted-foreground">{ticket.numero}</span>
-          {/* EstadoTicketBadge sigue tipado al literal español del mock (TicketBadges.tsx,
-              fuera de alcance de esta fase); etiquetaEstadoTicket() produce exactamente esos
-              mismos literales ("Nuevo", "Abierto", …), así que el cast es seguro. */}
-          <EstadoTicketBadge estado={etiquetaEstadoTicket(ticket.estado) as EstadoTicketMock} />
+          <EstadoTicketBadge estado={ticket.estado} />
           <span className="ml-auto font-mono text-[11px] text-muted-foreground">
             {formatoFecha(ticket.fechaIngreso)}
           </span>
