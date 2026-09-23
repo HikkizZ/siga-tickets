@@ -258,6 +258,8 @@ function iniciales(nombre: string): string {
  * /clientes reales) sin tocar ninguna pantalla de negocio: solo lectura, dentro del popover
  * de perfil, que ya es de bajo riesgo y no forma parte del tablero/OT/tickets. */
 function UsuariosYClientesReales() {
+  const { usuario: usuarioActual } = useAuth();
+  const esAdmin = usuarioActual?.rol === "admin";
   const usuarios = useUsuarios();
   const clientes = useClientes();
 
@@ -267,7 +269,16 @@ function UsuariosYClientesReales() {
       <div className="flex justify-between gap-3">
         <dt className="text-muted-foreground">Usuarios</dt>
         <dd className="font-mono text-xs">
-          {usuarios.isLoading ? "cargando…" : usuarios.isError ? "error" : `${usuarios.data?.length ?? 0}`}
+          {/* GET /usuarios es admin-only en el backend (docs/api.md): para cualquier otro rol,
+              useUsuarios() ni siquiera dispara la llamada (useUsuarios.ts) — "solo admin" en vez
+              de mostrar "0", que daría a entender que de verdad no hay usuarios. */}
+          {!esAdmin
+            ? "solo admin"
+            : usuarios.isLoading
+              ? "cargando…"
+              : usuarios.isError
+                ? "error"
+                : `${usuarios.data?.length ?? 0}`}
         </dd>
       </div>
       <div className="flex justify-between gap-3">
