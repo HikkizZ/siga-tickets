@@ -1,6 +1,6 @@
-# siga-ot — Contrato de la API (Fases 0 a 6)
+# siga-ot — Contrato de la API (Fases 0 a 7)
 
-Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos), Fase 2 (cotizaciones), Fase 3 (tickets: hilo, tomar/derivar, conversión a OT), Fase 4 (SLA en horas hábiles + notificaciones), Fase 5 (portal público + correo saliente) y Fase 6 (ingesta de correo, IMAP) implementadas.
+Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad del diseño es `backend-diseno.md`; si algo difiere, este archivo describe lo que el código hace hoy. Estado: Fase 0 (auth, usuarios, clientes), Fase 1 (OT núcleo, adjuntos), Fase 2 (cotizaciones), Fase 3 (tickets: hilo, tomar/derivar, conversión a OT), Fase 4 (SLA en horas hábiles + notificaciones), Fase 5 (portal público + correo saliente), Fase 6 (ingesta de correo, IMAP) y Fase 7 (dashboard + búsqueda global) implementadas.
 
 ## Convenciones
 
@@ -670,3 +670,76 @@ Query: `page` (≥1, def. 1), `perPage` (1–100, def. 25), `estado` (`pendiente
 ### POST /correos-ingeridos/:id/reprocesar · admin
 
 Solo si `estado='error'` (`409 CORREO_INGERIDO_NO_REPROCESABLE` si no). Relee el `raw_ref` desde `FileStorage` (sin volver a conectarse al buzón), reconstruye el correo y corre el mismo pipeline sobre ese único mensaje, reutilizando la fila existente (nunca duplica una fila por el mismo `message_id`). → `200 { data: { id, messageId, origen, recibidoEn, estado, ticketId, error } }`, incluso si vuelve a fallar (queda en `error` de nuevo). `404 CORREO_INGERIDO_NO_ENCONTRADO` si el id no existe.
+
+---
+
+## Dashboard y búsqueda global (Fase 7)
+
+Por consulta directa (sin materializar nada — con ~8 usuarios es apropiado), sin paginación ni caché. Ambos endpoints requieren rol mínimo `lectura`.
+
+### GET /dashboard · lectura
+
+Query opcional `desde`/`hasta` (`YYYY-MM-DD`). `hasta` anterior a `desde` → `400 VALIDATION_ERROR` (mismo estilo que el resto de los filtros de fecha de la API). Si solo viene uno de los dos, se aplica solo ese límite (no se inventa el otro lado del rango); sin ninguno de los dos, sin filtro de fecha (histórico completo).
+
+Cada campo indica si es una **foto del estado actual** (no se mueve con `desde`/`hasta`) o si está **filtrado** por fecha (sobre la columna que se indica; en columnas `datetimeoffset` el día se cuenta en hora de Chile, igual que el resto de los filtros `desde`/`hasta` de la API — `AT TIME ZONE 'Pacific SA Standard Time'`; `cotizacion.fecha` ya es un `date` de negocio y no necesita esa conversión).
+
+```
+GET /api/v1/dashboard?desde=2026-09-01&hasta=2026-09-30
+```
+```json
+{ "status": "ok", "data": {
+  "otActivas": 12,
+  "otConSlaVencido": 2,
+  "montoCotizacionesAprobadas": 4500000,
+  "tiempoMedioResolucionDias": 3.5,
+  "otPorEstado": [
+    { "estado": "ingresado", "cantidad": 4 }, { "estado": "en_cotizacion", "cantidad": 1 },
+    { "estado": "aprobado", "cantidad": 2 }, { "estado": "en_ejecucion", "cantidad": 5 },
+    { "estado": "terminado", "cantidad": 8 }, { "estado": "facturado", "cantidad": 3 } ],
+  "otPorCliente": [ { "clienteId": "…", "clienteNombre": "Minera Los Andes", "cantidad": 4 } ],
+  "otPorResponsable": [ { "usuarioId": "…", "usuarioNombre": "Juan Pérez", "cantidad": 5 } ],
+  "cotizacionesPorEstado": [
+    { "estado": "borrador", "cantidad": 1, "montoClp": 90000 },
+    { "estado": "enviada", "cantidad": 0, "montoClp": 0 },
+    { "estado": "aprobada", "cantidad": 3, "montoClp": 4500000 },
+    { "estado": "rechazada", "cantidad": 1, "montoClp": 200000 } ],
+  "ticketsSinResponderFueraDeSla": 2,
+  "tiempoMedioPrimeraRespuestaHoras": 1.8
+} }
+```
+
+| Campo | Foto actual / filtrado | Qué cuenta |
+|---|---|---|
+| `otActivas` | Foto actual | OT con `estado NOT IN ('terminado','facturado')` |
+| `otConSlaVencido` | Foto actual | OT con `slaEstado='vencida'` y no terminal |
+| `montoCotizacionesAprobadas` | Filtrado (`aprobadaEn`) | `SUM(montoClp)` de cotizaciones `estado='aprobada'` |
+| `tiempoMedioResolucionDias` | Filtrado (`terminadoEn`) | Promedio de `(terminadoEn - fechaIngreso)` en días, de OT con `terminadoEn` no nulo. `null` si no hay datos |
+| `otPorEstado` | Foto actual | Cantidad de OT por cada uno de los 6 estados, incluidos los que están en 0 |
+| `otPorCliente` | Foto actual | Top 10 clientes por cantidad de OT activas (mismo criterio que `otActivas`); solo clientes con ≥ 1, sin las OT internas (sin cliente) |
+| `otPorResponsable` | Foto actual | OT activas agrupadas por `responsableActualId` (sin límite; excluye las sin responsable) |
+| `cotizacionesPorEstado` | Filtrado (`fecha`) | Cantidad y `SUM(montoClp)` por cada uno de los 4 estados, incluidos los que están en 0 |
+| `ticketsSinResponderFueraDeSla` | Foto actual | Tickets con `primeraRespuestaEn IS NULL` y `slaEstado='vencida'` |
+| `tiempoMedioPrimeraRespuestaHoras` | Filtrado (`primeraRespuestaEn`) | Promedio de `(primeraRespuestaEn - fechaIngreso)` en **horas de reloj** (no horas hábiles: es una métrica de reporte, distinta del cálculo de cumplimiento de SLA de la Fase 4, que sí cuenta en horas hábiles). `null` si no hay datos |
+
+### GET /buscar · lectura
+
+Query `q` (1–100 caracteres, mismo estilo Zod que los demás filtros `q`). Cuatro ramas, cada una como una consulta `TOP 5` separada (no un único `UNION ALL`: cada tipo devuelve una forma distinta, así que combinar 4 queries en la aplicación evita rellenar columnas con `NULL` a mano y es igual de simple de mantener), usando `escaparLike` (la misma función que ya usan los filtros `q` de OT/tickets/cotizaciones) para que `%`, `_` y `[` se busquen literales. Sin paginación (autocompletar, no un listado).
+
+```
+GET /api/v1/buscar?q=OT-1042
+```
+```json
+{ "status": "ok", "data": {
+  "ots": [ { "tipo": "ot", "id": "…", "numero": "OT-1042", "titulo": "…", "estado": "en_ejecucion" } ],
+  "tickets": [ { "tipo": "ticket", "id": "…", "numero": "TK-0001", "asunto": "…", "estado": "abierto" } ],
+  "cotizaciones": [ { "tipo": "cotizacion", "id": "…", "numero": "COT-2041", "estado": "aprobada", "montoClp": 150000 } ],
+  "clientes": [ { "tipo": "cliente", "id": "…", "nombre": "Minera Los Andes" } ]
+} }
+```
+
+- **OT**: por `numero` o `titulo`.
+- **Ticket**: por `numero` o `asunto`.
+- **Cotización**: por `numero`.
+- **Cliente**: por `nombre`.
+
+Cada arreglo trae como máximo 5 resultados, más recientes primero (por `numero DESC`; los clientes, que no tienen folio, por `nombre ASC`).

@@ -9,9 +9,11 @@ import { errorHandler, notFound } from "../middlewares/errorHandler.js";
 import { requestLogger } from "../middlewares/requestLogger.js";
 import { adjuntoRouter } from "../routes/adjunto.routes.js";
 import { authRouter } from "../routes/auth.routes.js";
+import { buscarRouter } from "../routes/buscar.routes.js";
 import { clienteRouter } from "../routes/cliente.routes.js";
 import { correoIngeridoRouter } from "../routes/correoIngerido.routes.js";
 import { cotizacionRouter } from "../routes/cotizacion.routes.js";
+import { dashboardRouter } from "../routes/dashboard.routes.js";
 import { notificacionRouter } from "../routes/notificacion.routes.js";
 import { otRouter } from "../routes/ot.routes.js";
 import { portalRouter } from "../routes/portal.routes.js";
@@ -45,6 +47,8 @@ app.use("/api/v1/adjuntos", adjuntoRouter);
 app.use("/api/v1/sla", slaRouter);
 app.use("/api/v1/notificaciones", notificacionRouter);
 app.use("/api/v1/correos-ingeridos", correoIngeridoRouter);
+app.use("/api/v1/dashboard", dashboardRouter);
+app.use("/api/v1/buscar", buscarRouter);
 
 // Portal público (Fase 5): sin JWT interno, sin prefijo /api/v1 (ver docs/backend-diseno.md sección 4).
 app.use("/publico", portalRouter);
