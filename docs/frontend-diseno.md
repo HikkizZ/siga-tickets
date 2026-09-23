@@ -1235,3 +1235,142 @@ de este documento). Estado final:
   pudo autodesactivarse). Ningún backend se modificó para hacer pasar al frontend — cualquier
   comportamiento inesperado encontrado en el camino (ver "Bug encontrado y corregido" de las Fases
   1, 3, 4 y 5) se corrigió del lado del frontend o se documentó como límite real de la API.
+
+## Fase A — configuración de correo (post-cierre del plan de 7 fases)
+
+Trabajo nuevo, fuera de la numeración 0–6 de arriba: el backend agregó una "Fase A" propia
+(`docs/api.md`, sección "Configuración de correo (Fase A)") que expone `GET`/`PUT
+/correo/config` para administrar el buzón real (IMAP entrante + SMTP saliente) desde una única
+fila en `configuracion_correo`, reemplazando las variables de entorno fijas que usaban
+`jobs/correoSalienteJob.ts`/`jobs/ingestaCorreoJob.ts`. Esta sección cubre solo el frontend de esa
+pieza: una tercera sección "Correo" en `/configuracion`, debajo de Feriados. Fuera de alcance (a
+propósito, quedan para fases futuras): Departamentos, Temas de ayuda, Planes SLA, Plantillas de
+correo.
+
+Archivos nuevos:
+
+- `src/lib/api/correoConfig.ts` — funciones de red puras (mismo patrón que `sla.ts`): tipo
+  `CorreoConfig` (espejo exacto de la forma de `GET /correo/config`, con `tieneImapPassword`/
+  `tieneSmtpPassword` en vez de la contraseña real, que el backend nunca devuelve), tipo
+  `ActualizarCorreoConfigInput` (`Partial<Omit<CorreoConfig, "tieneImapPassword" |
+  "tieneSmtpPassword" | "actualizadoEn">>` más `imapPassword`/`smtpPassword` opcionales en texto
+  plano, para `PUT /correo/config`), y `obtenerCorreoConfig`/`actualizarCorreoConfig`.
+- `src/hooks/useCorreoConfig.ts` — `useCorreoConfig()` (query) y `useActualizarCorreoConfig()`
+  (mutation con `toast.success("Configuración de correo guardada.")`/`toast.error`, invalida
+  `["correo","config"]` al guardar), mismo criterio que `useSla.ts`.
+
+Editado:
+
+- `src/lib/labels.ts` — se agregó `puedeEscribirCorreoConfig(rol)` (`rol === "admin"`, igual que
+  `puedeEscribirSla`; función propia y no reutilizada porque protege una superficie distinta,
+  mismo criterio ya usado para separar `puedeEscribirSla` de `puedeEscribirCotizaciones`). El resto
+  del archivo no cambió.
+- `src/routes/configuracion.tsx` — se agregó la sección "Correo" completa debajo de Feriados, sin
+  tocar SLA ni Feriados. Dos bloques visuales (`BloqueCorreo`, componente local reutilizado dos
+  veces: "Buzón entrante (IMAP)" y "Correo saliente (SMTP)") con host/puerto/usuario/contraseña
+  (+carpeta solo en IMAP) y switches TLS/Habilitado, más dos campos generales fuera de los bloques
+  (Remitente = `correoDesde`, Dominio). RBAC visual idéntico al de SLA: `puedeEscribirCorreoConfig`
+  condiciona `Input`/`Switch` editables vs. texto plano + switches deshabilitados, con el mismo
+  aviso "Solo un administrador puede...".
+
+### Decisiones dentro del espacio permitido
+
+- **Diff real contra el servidor, no el patrón de SLA**: a diferencia de `guardar()` en la sección
+  SLA (que manda las 3 filas completas en cada `PUT`, porque ninguno de sus campos es secreto),
+  `SeccionCorreo.guardar()` arma el body con `construirCambiosCorreo(config, borrador)`: compara
+  cada campo del borrador contra el último valor cargado del servidor y solo incluye los que
+  cambiaron de verdad. Es la única forma correcta de que "cambiar solo el puerto" no tenga forma de
+  arrastrar un campo con un valor viejo, y es indispensable para las contraseñas: `imapPassword`/
+  `smtpPassword` solo entran al body si el usuario escribió algo nuevo en el campo (que siempre
+  arranca vacío), nunca por comparación contra un valor cargado — el backend nunca envía la
+  contraseña real, así que no hay nada contra qué diferenciar.
+- **El borrador se resetea solo al guardar, reutilizando la invalidación existente**: igual que en
+  SLA, `useEffect(() => { if (config) setBorrador(aCorreoBorrador(config)) }, [config])` ya
+  resincroniza el borrador cuando la mutación invalida `["correo","config"]` y llega el `GET`
+  actualizado. Efecto colateral correcto y buscado: como `aCorreoBorrador` siempre pone
+  `imapPassword`/`smtpPassword` en `""`, esto limpia solos los campos de contraseña recién escritos
+  después de un guardado exitoso, sin código extra para "limpiar el formulario".
+- **Placeholders de ejemplo por bloque, no un único texto compartido**: se encontró durante el
+  recorrido de prueba (ver verificación abajo) que el bloque SMTP mostraba el placeholder de
+  ejemplo de IMAP (`imap.sigaltda.cl`/`993`) por usar el mismo `CampoCorreoTexto` sin distinguir el
+  bloque. Se corrigió con `const esImap = idPrefix === "imap"` dentro de `BloqueCorreo`, que elige
+  `imap.sigaltda.cl`/`993` o `smtp.sigaltda.cl`/`587` (los mismos ejemplos que trae el propio
+  contrato en `docs/api.md`). No afecta el contrato con el backend (son solo placeholders de un
+  campo vacío), pero sí la usabilidad real del formulario.
+- **`BloqueCorreo` como componente local reutilizado, no dos formularios copiados**: los bloques
+  IMAP y SMTP comparten campos casi idénticos (difieren solo en "Carpeta", exclusivo de IMAP); se
+  optó por un componente parametrizado (`idPrefix`, `titulo`, `carpeta?`/`onCarpeta?` opcionales)
+  en vez de duplicar ~40 líneas de JSX dos veces, mismo criterio de "reuso justificado" que ya usa
+  `SeccionFeriados` como componente local separado del componente principal.
+
+## Fase A — verificación
+
+`npx tsc --noEmit` limpio (confirmado después del fix de placeholders).
+
+**Infraestructura, hallazgo no relacionado con el código de esta fase pero necesario para poder
+probarla**: a diferencia de fases anteriores (que levantaban backend/frontend con `npm run dev`
+sueltos), en esta sesión `siga-ot-backend`/`siga-ot-worker`/`siga-ot-frontend` ya corrían por
+`docker compose` desde antes (contenedores de desarrollo persistentes, con `./backend/src` y
+`./frontend/src` montados como volumen). Se detectó que ni `tsx watch` (backend) ni Vite (frontend)
+recibían los eventos de cambio de archivo del bind mount de Docker Desktop en Windows para esta
+sesión — los archivos nuevos llegaban al contenedor (confirmado con `docker exec ... grep`) pero
+el proceso servía el árbol de módulos viejo (`GET /correo/config` daba `404 NOT_FOUND` pese a que
+`correoConfig.routes.ts` y su wiring en `app.ts` ya existían en el commit del backend). Un
+`docker restart` simple del frontend resolvió su caso; el backend además había agregado
+`MAIL_CREDENTIALS_KEY` a `backend/.env` después de que el contenedor ya existía, y como
+`env_file` solo se lee al crear el contenedor, un `restart` lo dejó sin esa variable y no
+arrancaba (`Error: Variables de entorno inválidas: MAIL_CREDENTIALS_KEY: Required`) —
+se resolvió con `docker compose up -d --no-deps --force-recreate backend worker`, que sí relee
+`.env`. Ninguna causa de esto es código de esta fase; queda anotado para que la próxima fase que
+edite backend o frontend contra estos mismos contenedores no pierda tiempo pensando que sus
+cambios no compilan.
+
+Recorrido real en navegador (backend/worker/frontend reales, contra la BD real `siga-tickets`,
+puerto 8082, MCP de navegador):
+
+1. Admin desechable nuevo (`qa_felipe_admin_fa`) vía `seed.ts` con `SEED_ADMIN_USERNAME`/
+   `SEED_ADMIN_EMAIL`/`SEED_ADMIN_NOMBRE`/`SEED_ADMIN_PASSWORD` pasadas inline en el comando (nunca
+   escritas en `backend/.env`), contraseña de un solo uso generada con `openssl rand -hex 16` y
+   guardada solo en un archivo temporal del scratchpad de la sesión, borrado al terminar. Con su
+   token (por `POST /auth/login`, nunca impreso) se creó un `tecnico` desechable
+   (`qa_felipe_tec_fa`) vía `POST /usuarios`, mismo criterio de contraseña temporal.
+2. Con `qa_felipe_admin_fa` logueado por el formulario real de `/login`: en `/configuracion`, la
+   sección "Correo" cargó el estado "nunca configurado" (`GET /correo/config` con todos los campos
+   en `null`/`false`, `200`, no un error). Se completaron host/puerto/usuario/contraseña ficticios
+   para ambos bloques (`imap.test.sigaltda.cl:993`, `smtp.test.sigaltda.cl:587`, carpeta `INBOX`,
+   remitente `Soporte QA <soporte@sigaltda.cl>`, dominio `sigaltda.cl`, ambos switches
+   "Habilitado" encendidos) y se guardó → `PUT /correo/config` real `200`, toast de éxito. Se
+   recargó la página por completo (no solo la query): todos los campos no-contraseña persistieron
+   tal cual, y ambos campos de contraseña volvieron a mostrar el placeholder "•••••••• (ya
+   configurada)" vacíos, sin rastro del valor escrito (confirmado leyendo `input.value` por JS de
+   depuración, nunca por pantalla).
+3. Guardado parcial: se cambió **solo** el puerto IMAP (993→995) y se guardó de nuevo. La
+   respuesta del `PUT` (`200`) trajo `imapPort:995` junto con `tieneImapPassword:true` y
+   `tieneSmtpPassword:true` — confirma indirectamente que el guardado parcial (que nunca mandó
+   `imapPassword`/`smtpPassword`) no tocó las contraseñas ya guardadas, tal como exige
+   `construirCambiosCorreo`.
+4. Con `qa_felipe_tec_fa` (técnico) logueado (sesión anterior cerrada con `localStorage.clear()`
+   real, no solo navegación): la sección "Correo" se mostró en texto plano (sin ningún `<input>` de
+   host/puerto/usuario en el DOM, confirmado con JS de depuración — `document.getElementById(...)`
+   devolvió `null` para los 11 campos de texto), los switches TLS/Habilitado presentes pero
+   `disabled`, los datos del paso 2/3 visibles tal cual (incluida la contraseña como "ya
+   configurada"), el aviso de solo lectura visible, y sin botones "Guardar"/"Descartar" — mismo
+   patrón que SLA.
+5. Consola del navegador (`read_console_messages`, solo errores): un único `404` (residuo del
+   momento en que el backend todavía no había recargado la ruta, antes del `force-recreate` del
+   punto de infraestructura arriba) y tres `403` de `GET /usuarios` para el técnico (mismo límite
+   admin-only ya documentado desde la Fase 1, no una regresión de esta fase). Ningún `TypeError` ni
+   `Uncaught` en ningún punto del recorrido.
+
+Al terminar: `qa_felipe_tec_fa` quedó desactivado (`PATCH /usuarios/:id {activo:false}`, `200`). El
+admin de prueba `qa_felipe_admin_fa` **no** se pudo desactivar a sí mismo (`409 CONFLICT`, mismo
+bloqueo ya documentado desde la Fase 0); queda activo en `siga-tickets` con una contraseña que no
+quedó en ningún archivo del repo ni de la sesión. La fila de prueba de `configuracion_correo`
+(host/usuario/contraseñas ficticias de los pasos 2–3) se borró de la BD real al terminar (`DELETE
+FROM configuracion_correo` vía un script desechable de una sola corrida, nunca commiteado); `GET
+/correo/config` quedó de nuevo en el estado "nunca configurado". A diferencia de fases anteriores,
+backend/worker/frontend **no** se detuvieron al terminar: ya corrían por `docker compose` como
+entorno de desarrollo persistente antes de empezar esta verificación (no los levantó esta sesión),
+así que se dejaron **corriendo** en el mismo estado en que se encontraron — confirmado con
+`curl http://localhost:3002/health` (`200`) y `http://localhost:8082/` (`200`) después de la
+limpieza.

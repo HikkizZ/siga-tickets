@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Calendar, Check, Settings, ShieldAlert, Trash2 } from "lucide-react";
+import { Calendar, Check, Mail, Settings, ShieldAlert, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { PrioridadBadge } from "@/components/Prioridad";
 import { formatoFecha } from "@/lib/mock-data";
-import { etiquetaPrioridad, PRIORIDADES, puedeEscribirSla, type Prioridad } from "@/lib/labels";
+import {
+  etiquetaPrioridad,
+  PRIORIDADES,
+  puedeEscribirCorreoConfig,
+  puedeEscribirSla,
+  type Prioridad,
+} from "@/lib/labels";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import {
   useActualizarSlaConfig,
@@ -17,7 +23,9 @@ import {
   useFeriados,
   useSlaConfig,
 } from "@/hooks/useSla";
+import { useActualizarCorreoConfig, useCorreoConfig } from "@/hooks/useCorreoConfig";
 import type { ActualizarSlaConfigFila, SlaConfigFila } from "@/lib/api/sla";
+import type { ActualizarCorreoConfigInput, CorreoConfig } from "@/lib/api/correoConfig";
 
 export const Route = createFileRoute("/configuracion")({
   head: () => ({
@@ -255,6 +263,20 @@ function Configuracion() {
       </div>
 
       <SeccionFeriados puedeEscribir={puedeEscribir} />
+
+      <div className="mt-10 flex items-center gap-3">
+        <span className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+          <Mail className="size-5" />
+        </span>
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Correo</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Buzón entrante (IMAP) y correo saliente (SMTP) que usa el worker de ingesta y de envío.
+          </p>
+        </div>
+      </div>
+
+      <SeccionCorreo puedeEscribir={puedeEscribirCorreoConfig(usuario?.rol ?? "lectura")} />
     </div>
   );
 }
@@ -388,6 +410,430 @@ function SeccionFeriados({ puedeEscribir }: { puedeEscribir: boolean }) {
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+// Borrador editable de la config de correo (docs/api.md, sección "Configuración de correo (Fase
+// A)"). Los campos numéricos se guardan como string (valor crudo del Input) y se convierten recién
+// al construir el PUT; los de contraseña son propios del borrador (no existen en CorreoConfig, que
+// nunca trae la contraseña real) y arrancan vacíos siempre, sin importar si ya hay una guardada.
+type CorreoBorrador = {
+  imapHost: string;
+  imapPort: string;
+  imapUser: string;
+  imapPassword: string;
+  imapFolder: string;
+  imapTls: boolean;
+  imapHabilitado: boolean;
+  smtpHost: string;
+  smtpPort: string;
+  smtpUser: string;
+  smtpPassword: string;
+  smtpTls: boolean;
+  smtpHabilitado: boolean;
+  correoDesde: string;
+  dominio: string;
+};
+
+function aCorreoBorrador(config: CorreoConfig): CorreoBorrador {
+  return {
+    imapHost: config.imapHost ?? "",
+    imapPort: config.imapPort !== null ? String(config.imapPort) : "",
+    imapUser: config.imapUser ?? "",
+    imapPassword: "",
+    imapFolder: config.imapFolder ?? "",
+    imapTls: config.imapTls,
+    imapHabilitado: config.imapHabilitado,
+    smtpHost: config.smtpHost ?? "",
+    smtpPort: config.smtpPort !== null ? String(config.smtpPort) : "",
+    smtpUser: config.smtpUser ?? "",
+    smtpPassword: "",
+    smtpTls: config.smtpTls,
+    smtpHabilitado: config.smtpHabilitado,
+    correoDesde: config.correoDesde ?? "",
+    dominio: config.dominio ?? "",
+  };
+}
+
+// Solo arma los campos que cambiaron respecto a lo último cargado del servidor: PUT /correo/config
+// es parcial (solo se actualiza lo enviado), así que un guardado que solo tocó, p. ej., el puerto
+// nunca debe mandar (ni por lo tanto pisar) la contraseña ya guardada. Los puertos vacíos se
+// ignoran (no se manda un puerto inválido); las contraseñas solo se mandan si el usuario escribió
+// algo nuevo en esta sesión de edición.
+function construirCambiosCorreo(config: CorreoConfig, borrador: CorreoBorrador): ActualizarCorreoConfigInput {
+  const cambios: ActualizarCorreoConfigInput = {};
+
+  if (borrador.imapHost !== (config.imapHost ?? "")) cambios.imapHost = borrador.imapHost;
+  if (borrador.imapUser !== (config.imapUser ?? "")) cambios.imapUser = borrador.imapUser;
+  if (borrador.imapFolder !== (config.imapFolder ?? "")) cambios.imapFolder = borrador.imapFolder;
+  if (borrador.imapTls !== config.imapTls) cambios.imapTls = borrador.imapTls;
+  if (borrador.imapHabilitado !== config.imapHabilitado) cambios.imapHabilitado = borrador.imapHabilitado;
+  if (borrador.imapPassword.trim() !== "") cambios.imapPassword = borrador.imapPassword;
+  if (borrador.imapPort.trim() !== "") {
+    const puerto = Number(borrador.imapPort);
+    if (puerto !== config.imapPort) cambios.imapPort = puerto;
+  }
+
+  if (borrador.smtpHost !== (config.smtpHost ?? "")) cambios.smtpHost = borrador.smtpHost;
+  if (borrador.smtpUser !== (config.smtpUser ?? "")) cambios.smtpUser = borrador.smtpUser;
+  if (borrador.smtpTls !== config.smtpTls) cambios.smtpTls = borrador.smtpTls;
+  if (borrador.smtpHabilitado !== config.smtpHabilitado) cambios.smtpHabilitado = borrador.smtpHabilitado;
+  if (borrador.smtpPassword.trim() !== "") cambios.smtpPassword = borrador.smtpPassword;
+  if (borrador.smtpPort.trim() !== "") {
+    const puerto = Number(borrador.smtpPort);
+    if (puerto !== config.smtpPort) cambios.smtpPort = puerto;
+  }
+
+  if (borrador.correoDesde !== (config.correoDesde ?? "")) cambios.correoDesde = borrador.correoDesde;
+  if (borrador.dominio !== (config.dominio ?? "")) cambios.dominio = borrador.dominio;
+
+  return cambios;
+}
+
+/** Campo de texto/número: Input editable o texto plano de solo lectura, mismo criterio que la
+ * tabla de SLA (columnas numéricas condicionan Input vs `<span>` según `puedeEscribir`). */
+function CampoCorreoTexto({
+  id,
+  label,
+  value,
+  onChange,
+  puedeEscribir,
+  type = "text",
+  placeholder,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (valor: string) => void;
+  puedeEscribir: boolean;
+  type?: "text" | "number";
+  placeholder?: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-xs">
+        {label}
+      </Label>
+      {puedeEscribir ? (
+        <Input
+          id={id}
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="h-9"
+        />
+      ) : (
+        <p className="flex h-9 items-center text-sm">
+          {value || <span className="text-muted-foreground">—</span>}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Campo de contraseña: nunca se prellena con nada real (el backend nunca la devuelve). Si ya hay
+ * una guardada (`tieneGuardada`), el placeholder lo indica; el campo arranca vacío y solo se manda
+ * en el PUT si el usuario escribe algo nuevo (ver `construirCambiosCorreo`). */
+function CampoCorreoPassword({
+  id,
+  label,
+  value,
+  onChange,
+  puedeEscribir,
+  tieneGuardada,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (valor: string) => void;
+  puedeEscribir: boolean;
+  tieneGuardada: boolean;
+}) {
+  const textoEstado = tieneGuardada ? "•••••••• (ya configurada)" : "Sin configurar";
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-xs">
+        {label}
+      </Label>
+      {puedeEscribir ? (
+        <Input
+          id={id}
+          type="password"
+          autoComplete="new-password"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={textoEstado}
+          className="h-9"
+        />
+      ) : (
+        <p className="flex h-9 items-center text-sm text-muted-foreground">{textoEstado}</p>
+      )}
+    </div>
+  );
+}
+
+function CampoCorreoSwitch({
+  id,
+  label,
+  checked,
+  onCheckedChange,
+  puedeEscribir,
+}: {
+  id: string;
+  label: string;
+  checked: boolean;
+  onCheckedChange: (valor: boolean) => void;
+  puedeEscribir: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <Switch id={id} checked={checked} disabled={!puedeEscribir} onCheckedChange={onCheckedChange} aria-label={label} />
+      <Label htmlFor={id} className="text-xs font-normal">
+        {label}
+      </Label>
+    </div>
+  );
+}
+
+/** Un bloque (IMAP o SMTP): host/puerto/usuario/contraseña (+carpeta solo IMAP) y los switches
+ * TLS/Habilitado. `idPrefix` evita colisión de ids entre los dos bloques en el mismo formulario. */
+function BloqueCorreo({
+  idPrefix,
+  titulo,
+  puedeEscribir,
+  tienePassword,
+  host,
+  onHost,
+  puerto,
+  onPuerto,
+  usuarioCorreo,
+  onUsuarioCorreo,
+  password,
+  onPassword,
+  tls,
+  onTls,
+  habilitado,
+  onHabilitado,
+  carpeta,
+  onCarpeta,
+}: {
+  idPrefix: string;
+  titulo: string;
+  puedeEscribir: boolean;
+  tienePassword: boolean;
+  host: string;
+  onHost: (v: string) => void;
+  puerto: string;
+  onPuerto: (v: string) => void;
+  usuarioCorreo: string;
+  onUsuarioCorreo: (v: string) => void;
+  password: string;
+  onPassword: (v: string) => void;
+  tls: boolean;
+  onTls: (v: boolean) => void;
+  habilitado: boolean;
+  onHabilitado: (v: boolean) => void;
+  carpeta?: string;
+  onCarpeta?: (v: string) => void;
+}) {
+  // Placeholders de ejemplo distintos por bloque (docs/api.md trae "imap.sigaltda.cl"/993 para
+  // IMAP y "smtp.sigaltda.cl"/587 para SMTP en el mismo ejemplo).
+  const esImap = idPrefix === "imap";
+  return (
+    <div className="space-y-3 rounded-xl border border-border bg-card card-elev p-4">
+      <h3 className="text-sm font-semibold">{titulo}</h3>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <CampoCorreoTexto
+          id={`${idPrefix}-host`}
+          label="Host"
+          value={host}
+          onChange={onHost}
+          puedeEscribir={puedeEscribir}
+          placeholder={esImap ? "imap.sigaltda.cl" : "smtp.sigaltda.cl"}
+        />
+        <CampoCorreoTexto
+          id={`${idPrefix}-puerto`}
+          label="Puerto"
+          type="number"
+          value={puerto}
+          onChange={onPuerto}
+          puedeEscribir={puedeEscribir}
+          placeholder={esImap ? "993" : "587"}
+        />
+        <CampoCorreoTexto
+          id={`${idPrefix}-usuario`}
+          label="Usuario"
+          value={usuarioCorreo}
+          onChange={onUsuarioCorreo}
+          puedeEscribir={puedeEscribir}
+          placeholder="soporte@sigaltda.cl"
+        />
+        <CampoCorreoPassword
+          id={`${idPrefix}-password`}
+          label="Contraseña"
+          value={password}
+          onChange={onPassword}
+          puedeEscribir={puedeEscribir}
+          tieneGuardada={tienePassword}
+        />
+        {carpeta !== undefined && onCarpeta && (
+          <CampoCorreoTexto
+            id={`${idPrefix}-carpeta`}
+            label="Carpeta"
+            value={carpeta}
+            onChange={onCarpeta}
+            puedeEscribir={puedeEscribir}
+            placeholder="INBOX"
+          />
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-6 pt-1">
+        <CampoCorreoSwitch id={`${idPrefix}-tls`} label="TLS" checked={tls} onCheckedChange={onTls} puedeEscribir={puedeEscribir} />
+        <CampoCorreoSwitch
+          id={`${idPrefix}-habilitado`}
+          label="Habilitado"
+          checked={habilitado}
+          onCheckedChange={onHabilitado}
+          puedeEscribir={puedeEscribir}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Sección de correo (Fase A), componente local (no exportado) — mismo criterio que
+ * SeccionFeriados: no cargar el componente principal con el estado propio de esta subsección. */
+function SeccionCorreo({ puedeEscribir }: { puedeEscribir: boolean }) {
+  const { data: config, isLoading, isError } = useCorreoConfig();
+  const guardarConfig = useActualizarCorreoConfig();
+  const [borrador, setBorrador] = useState<CorreoBorrador | null>(null);
+  const [guardado, setGuardado] = useState(false);
+
+  // Sincroniza el borrador con lo que devuelve el servidor: al cargar y cada vez que se guarda (la
+  // mutación invalida la query y trae los valores ya persistidos) — mismo criterio que la tabla de
+  // SLA. Como efecto colateral correcto, esto también limpia los campos de contraseña recién
+  // escritos después de guardar, porque el GET nunca los trae de vuelta.
+  useEffect(() => {
+    if (config) setBorrador(aCorreoBorrador(config));
+  }, [config]);
+
+  useEffect(() => {
+    if (!guardado) return;
+    const t = setTimeout(() => setGuardado(false), 2500);
+    return () => clearTimeout(t);
+  }, [guardado]);
+
+  const actualizarCampo = <K extends keyof CorreoBorrador>(campo: K, valor: CorreoBorrador[K]) =>
+    setBorrador((prev) => (prev ? { ...prev, [campo]: valor } : prev));
+
+  const guardar = () => {
+    if (!borrador || !config) return;
+    const cambios = construirCambiosCorreo(config, borrador);
+    guardarConfig.mutate(cambios, { onSuccess: () => setGuardado(true) });
+  };
+
+  if (isLoading) return <p className="mt-4 text-sm text-muted-foreground">Cargando configuración de correo…</p>;
+  if (isError || !borrador || !config)
+    return <p className="mt-4 text-sm text-alta">No se pudo cargar la configuración de correo.</p>;
+
+  return (
+    <div className="mt-4 space-y-4">
+      {!puedeEscribir && (
+        <p className="flex items-center gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+          <ShieldAlert className="size-4 shrink-0" />
+          Solo un administrador puede modificar el buzón de correo. Estás viendo los valores actuales de solo
+          lectura.
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <BloqueCorreo
+          idPrefix="imap"
+          titulo="Buzón entrante (IMAP)"
+          puedeEscribir={puedeEscribir}
+          tienePassword={config.tieneImapPassword}
+          host={borrador.imapHost}
+          onHost={(v) => actualizarCampo("imapHost", v)}
+          puerto={borrador.imapPort}
+          onPuerto={(v) => actualizarCampo("imapPort", v)}
+          usuarioCorreo={borrador.imapUser}
+          onUsuarioCorreo={(v) => actualizarCampo("imapUser", v)}
+          password={borrador.imapPassword}
+          onPassword={(v) => actualizarCampo("imapPassword", v)}
+          tls={borrador.imapTls}
+          onTls={(v) => actualizarCampo("imapTls", v)}
+          habilitado={borrador.imapHabilitado}
+          onHabilitado={(v) => actualizarCampo("imapHabilitado", v)}
+          carpeta={borrador.imapFolder}
+          onCarpeta={(v) => actualizarCampo("imapFolder", v)}
+        />
+        <BloqueCorreo
+          idPrefix="smtp"
+          titulo="Correo saliente (SMTP)"
+          puedeEscribir={puedeEscribir}
+          tienePassword={config.tieneSmtpPassword}
+          host={borrador.smtpHost}
+          onHost={(v) => actualizarCampo("smtpHost", v)}
+          puerto={borrador.smtpPort}
+          onPuerto={(v) => actualizarCampo("smtpPort", v)}
+          usuarioCorreo={borrador.smtpUser}
+          onUsuarioCorreo={(v) => actualizarCampo("smtpUser", v)}
+          password={borrador.smtpPassword}
+          onPassword={(v) => actualizarCampo("smtpPassword", v)}
+          tls={borrador.smtpTls}
+          onTls={(v) => actualizarCampo("smtpTls", v)}
+          habilitado={borrador.smtpHabilitado}
+          onHabilitado={(v) => actualizarCampo("smtpHabilitado", v)}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-card card-elev p-4 sm:grid-cols-2">
+        <CampoCorreoTexto
+          id="correo-desde"
+          label="Remitente"
+          value={borrador.correoDesde}
+          onChange={(v) => actualizarCampo("correoDesde", v)}
+          puedeEscribir={puedeEscribir}
+          placeholder="Soporte <soporte@sigaltda.cl>"
+        />
+        <CampoCorreoTexto
+          id="correo-dominio"
+          label="Dominio"
+          value={borrador.dominio}
+          onChange={(v) => actualizarCampo("dominio", v)}
+          puedeEscribir={puedeEscribir}
+          placeholder="sigaltda.cl"
+        />
+      </div>
+
+      {puedeEscribir && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button className="h-10" onClick={guardar} disabled={guardarConfig.isPending}>
+            {guardarConfig.isPending ? "Guardando…" : "Guardar cambios"}
+          </Button>
+          <Button
+            variant="outline"
+            className="h-10"
+            onClick={() => config && setBorrador(aCorreoBorrador(config))}
+            disabled={guardarConfig.isPending}
+          >
+            Descartar cambios
+          </Button>
+          {guardado && (
+            <span className="flex items-center gap-1.5 text-sm text-baja">
+              <Check className="size-4" /> Cambios guardados
+            </span>
+          )}
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        "Remitente" es el nombre y correo que verán los destinatarios (encabezado <code>From</code>);
+        "Dominio" se usa para construir el <code>Message-ID</code> de los correos salientes. La contraseña
+        nunca se muestra: el campo arranca vacío y solo se actualiza si escribes una nueva.
+      </p>
     </div>
   );
 }

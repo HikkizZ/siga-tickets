@@ -165,3 +165,9 @@ export function puedeConvertirTickets(rol: Rol): boolean {
 export function puedeEscribirSla(rol: Rol): boolean {
   return rol === "admin";
 }
+
+// Correo (Fase A): PUT /correo/config es admin-only, igual que SLA (docs/api.md, sección
+// "Configuración de correo (Fase A)"); GET es lectura para cualquier rol autenticado.
+export function puedeEscribirCorreoConfig(rol: Rol): boolean {
+  return rol === "admin";
+}
