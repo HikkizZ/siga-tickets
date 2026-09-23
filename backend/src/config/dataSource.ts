@@ -9,6 +9,7 @@ import { MailboxCursor1790000000000 } from "../migrations/1790000000000-MailboxC
 import { ConfiguracionCorreo1790100000000 } from "../migrations/1790100000000-ConfiguracionCorreo.js";
 import { DepartamentosYTemasAyuda1790200000000 } from "../migrations/1790200000000-DepartamentosYTemasAyuda.js";
 import { PlanSlaYPlantillaCorreo1790300000000 } from "../migrations/1790300000000-PlanSlaYPlantillaCorreo.js";
+import { CuentaPortal1790400000000 } from "../migrations/1790400000000-CuentaPortal.js";
 
 export const AppDataSource = new DataSource({
   type: "mssql",
@@ -35,5 +36,6 @@ export const AppDataSource = new DataSource({
     ConfiguracionCorreo1790100000000,
     DepartamentosYTemasAyuda1790200000000,
     PlanSlaYPlantillaCorreo1790300000000,
+    CuentaPortal1790400000000,
   ],
 });

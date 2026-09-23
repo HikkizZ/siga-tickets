@@ -7,6 +7,7 @@ import { ConfiguracionCorreo } from "./ConfiguracionCorreo.js";
 import { CorreoIngerido } from "./CorreoIngerido.js";
 import { CorreoSaliente } from "./CorreoSaliente.js";
 import { Cotizacion } from "./Cotizacion.js";
+import { CuentaPortal } from "./CuentaPortal.js";
 import { Departamento } from "./Departamento.js";
 import { EtapaOt } from "./EtapaOt.js";
 import { Evento } from "./Evento.js";
@@ -37,6 +38,7 @@ export const entidades = [
   CorreoIngerido,
   CorreoSaliente,
   Cotizacion,
+  CuentaPortal,
   Departamento,
   EtapaOt,
   Evento,

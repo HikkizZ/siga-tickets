@@ -698,6 +698,63 @@ Mismas cabeceras de seguridad que `GET /adjuntos/:id/descargar`. Solo descarga s
 
 ---
 
+## Cuentas de cliente (Fase D)
+
+Base: `/publico/cuentas` (mismo router `portalRouter`, mismo prefijo `/publico`, sin `/api/v1`). **Aditivo**: se SUMA al flujo de arriba (número+correo, token de portal de 15 min) — no lo reemplaza. Quien no quiera crear una cuenta sigue pudiendo consultar un ticket puntual exactamente igual que hoy con `POST /publico/tickets/seguimiento` + `GET /publico/ticket` + `POST /publico/ticket/mensajes`, sin ningún cambio de comportamiento en esos tres endpoints.
+
+Tabla `cuenta_portal`, completamente separada de `usuario` (staff interno): nunca comparte roles, permisos ni ninguna otra relación con ese mundo. Sin verificación de correo ni recuperación de contraseña en esta fase (quedan para una fase posterior); una cuenta nace `activo: true` de inmediato, mismo nivel de confianza que ya tiene hoy la creación de un ticket del portal.
+
+**JWT propio**: `{ scope: "portal-cuenta", cuentaId, email }`, TTL **7 días** (sesión persistente de verdad, a diferencia del token de portal por ticket, 15 min). Mismo secreto que el resto. `authenticatePortalCuenta` exige este scope exacto: un token de portal por ticket (`scope:"portal"`) o uno interno no sirven acá, y viceversa.
+
+### POST /publico/cuentas/registro — sin auth
+
+Captcha + rate limit `limitarPorIp` (5/hora/IP, mismo límite que `POST /publico/tickets`). Body:
+
+```json
+{ "email": "juan@cliente.cl", "password": "algo-de-8-a-72-caracteres", "nombre": "Juan Pérez", "captchaToken": "..." }
+```
+
+- `password`: 8–72 caracteres (mismo rango que `POST /auth/password`).
+- **Decisión de privacidad, deliberada**: a diferencia de `POST /publico/tickets/seguimiento` (que nunca revela si un ticket existe con otro correo), acá el email duplicado **sí se revela** con `409 CONFLICT`. Es el estándar de la industria en un registro público — el modelo de amenaza es distinto: enumerar tickets ajenos por número expone datos de terceros que nunca pidieron nada; confirmar "ese correo ya está registrado" no le da a un atacante nada que no pudiera ya probar contra el propio formulario de login.
+- Crea la cuenta activa de inmediato (sin verificación de correo) y hashea la contraseña con `hashPassword` (bcrypt, igual que `Usuario.passwordHash`).
+- Loguea automáticamente tras registrarse (mismo criterio de conveniencia que muchos registros públicos).
+
+→ `201 { data: { token } }`. Errores: `400 VALIDATION_ERROR` (incluida `password` fuera de rango o `captchaToken` vacío); `409 CONFLICT` (correo ya registrado); `429 RATE_LIMITED`.
+
+### POST /publico/cuentas/login — sin auth
+
+Captcha + rate limit `limitarPorIp` (5 intentos/15 min/IP, mismo criterio que el login interno). Body `{ "email": "...", "password": "...", "captchaToken": "..." }`.
+
+Mismo error genérico si el correo no existe, la contraseña no coincide, **o** la cuenta existe pero `activo: false`: nunca se revela cuál de las tres causas fue (mismo código/mensaje que `auth.service.ts::login`).
+
+→ `200 { data: { token } }`. Error: `401 INVALID_CREDENTIALS`; `429 RATE_LIMITED`.
+
+### GET /publico/cuentas/mis-tickets — con JWT de cuenta
+
+Lista paginada de **todos** los tickets cuyo `solicitanteEmail` coincide con el de la cuenta (colación insensible a mayúsculas de la BD, sin `LOWER()`), ordenada por `fechaIngreso DESC`. Query `page`/`perPage` (mismos defaults que el resto de la API: 1/25, `perPage` máx. 100).
+
+```json
+{ "status": "ok",
+  "data": [{ "numero": "TK-0007", "asunto": "…", "estado": "nuevo", "fechaIngreso": "…" }],
+  "meta": { "page": 1, "perPage": 25, "total": 1 } }
+```
+
+DTO reducido a propósito: nunca id interno, responsable, notas internas ni ningún otro dato (mismo principio que `toPortalTicket`).
+
+### GET /publico/cuentas/tickets/:numero — con JWT de cuenta
+
+Detalle completo de UN ticket de la cuenta, **misma proyección** que `GET /publico/ticket` (reutiliza `toPortalTicket`/`construirDetalleTicketPortal` de `portal.service.ts`, sin duplicar esa lógica). Antes de devolver nada valida que el ticket exista **y** que su `solicitanteEmail` (insensible a mayúsculas) coincida con el de la cuenta: si no existe, o existe pero es de otro correo, **el mismo `404 TICKET_NO_ENCONTRADO`** en ambos casos (mismo principio de privacidad que el resto del portal: nunca revela cuál de las dos causas fue).
+
+### POST /publico/cuentas/tickets/:numero/mensajes — con JWT de cuenta
+
+`multipart/form-data`: `cuerpo` (texto) + archivos opcionales en `adjuntos` (mismas reglas que el resto del portal). Responder como cliente a uno de sus propios tickets. Misma validación de pertenencia que el endpoint anterior (`404 TICKET_NO_ENCONTRADO` si no es suyo, mismo criterio: no distingue "no existe" de "es de otro").
+
+Reutiliza **tal cual** `crearMensajePortal` (`portal.mensaje.service.ts`, la misma función que ya usa `POST /publico/ticket/mensajes`): el endpoint existente no cambia, este solo resuelve el `ticketId` por número+pertenencia antes de llamarla. Mismo comportamiento de reapertura de estado (`esperando_cliente`/`resuelto → abierto`, cierra la pausa de SLA activa; `cerrado` no se reabre) y mismos adjuntos permitidos que el flujo existente.
+
+→ `201 { data: { id, cuerpo, creadoEn } }`. Errores: `400 VALIDATION_ERROR` (cuerpo vacío); `404 TICKET_NO_ENCONTRADO`; `415/413/400 ADJUNTO_*`; `429 RATE_LIMITED` (30/hora/IP, mismo limitador que el resto de la escritura del portal).
+
+---
+
 ## Correo saliente (Fase 5)
 
 Outbox transaccional (`correo_saliente`): se inserta en la MISMA transacción del hecho que lo origina, nunca se envía de forma síncrona en el request. Dos orígenes hoy:

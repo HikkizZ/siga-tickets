@@ -15,13 +15,16 @@ import {
 } from "../validations/portal.validation.js";
 
 // Los endpoints públicos de escritura llaman a esta interfaz, nunca a un proveedor concreto
-// (NoopCaptcha hoy aprueba cualquier token no vacío; Zod ya exige que no venga vacío).
-async function exigirCaptcha(token: string): Promise<void> {
+// (NoopCaptcha hoy aprueba cualquier token no vacío; Zod ya exige que no venga vacío). Exportada:
+// la reutiliza también cuentaPortal.controller.ts (Fase D), mismo criterio, sin duplicarla.
+export async function exigirCaptcha(token: string): Promise<void> {
   const ok = await captcha.verificar(token);
   if (!ok) throw new AppError(400, "CAPTCHA_INVALIDO", "No pudimos verificar que eres una persona");
 }
 
-function archivosDe(req: Request): Array<{ originalname: string; mimetype: string; buffer: Buffer }> {
+// Exportada: la reutiliza también cuentaPortal.controller.ts (Fase D) para su endpoint de
+// mensajes, mismo criterio de mapeo multipart, sin duplicarla.
+export function archivosDe(req: Request): Array<{ originalname: string; mimetype: string; buffer: Buffer }> {
   const files = (req.files as Express.Multer.File[] | undefined) ?? [];
   return files.map((f) => ({ originalname: f.originalname, mimetype: f.mimetype, buffer: f.buffer }));
 }

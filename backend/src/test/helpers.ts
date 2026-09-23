@@ -1,5 +1,6 @@
 import { AppDataSource } from "../config/dataSource.js";
 import { env } from "../config/env.js";
+import { CuentaPortal } from "../entities/CuentaPortal.js";
 import { Usuario } from "../entities/Usuario.js";
 import { Rol } from "../entities/enums.js";
 import { hashPassword } from "../auth/password.js";
@@ -13,6 +14,8 @@ const CON_SEMILLA = ["folio_counter", "sla_config", "calendario_laboral", "migra
 // se usa DELETE). evento es la excepción: su trigger rechaza DELETE, y como nadie la referencia
 // sí admite TRUNCATE (que no dispara triggers).
 const ORDEN_LIMPIEZA = [
+  // Fase D: sin FK hacia/desde ninguna otra tabla, puede ir en cualquier posición de la lista.
+  "cuenta_portal",
   "correo_saliente",
   "correo_ingerido",
   "mailbox_cursor",
@@ -109,4 +112,24 @@ export async function crearSesion(rol: Rol): Promise<{ usuario: Usuario; auth: s
 export async function crearUsuarioSistemaTest(): Promise<Usuario> {
   const { usuario } = await crearUsuarioTest(Rol.LECTURA, { username: "sistema", activo: false });
   return usuario;
+}
+
+// Cuenta de portal (Fase D) creada directo en BD (evita pasar por /publico/cuentas/registro en
+// cada test); útil sobre todo para el caso `activo:false`, que la API pública no puede producir
+// (no hay endpoint de admin para desactivar una cuenta en esta fase).
+export async function crearCuentaPortalTest(
+  opciones: { email?: string; password?: string; nombre?: string; activo?: boolean } = {},
+): Promise<{ cuenta: CuentaPortal; password: string }> {
+  const email = opciones.email ?? "cliente-test@test.local";
+  const password = opciones.password ?? "Password-de-test-1";
+  const repo = AppDataSource.getRepository(CuentaPortal);
+  const cuenta = await repo.save(
+    repo.create({
+      email,
+      passwordHash: await hashPassword(password),
+      nombre: opciones.nombre ?? "Cliente de prueba",
+      activo: opciones.activo ?? true,
+    }),
+  );
+  return { cuenta, password };
 }

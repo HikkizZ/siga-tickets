@@ -16,6 +16,12 @@ declare global {
       portal?: {
         ticketId: string;
       };
+      // Fase D: lo deja authenticatePortalCuenta (JWT de sesión persistente, scope:'portal-cuenta').
+      // Sumado a `portal`, no lo reemplaza: ambos mecanismos conviven.
+      portalCuenta?: {
+        cuentaId: string;
+        email: string;
+      };
     }
   }
 }

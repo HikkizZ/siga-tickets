@@ -142,15 +142,16 @@ export function toPortalTicket(ticket: Ticket, mensajes: MensajePortalOrigen[], 
   };
 }
 
-export async function obtenerTicketPortal(ticketId: string) {
-  const ticket = await AppDataSource.getRepository(Ticket).findOne({ where: { id: ticketId } });
-  if (!ticket) throw ticketNoEncontrado();
-
+// Extraída de obtenerTicketPortal (Fase 5) para que el detalle de un ticket por cuenta de portal
+// (Fase D, GET /publico/cuentas/tickets/:numero) reutilice exactamente la misma proyección sin
+// duplicar la consulta de mensajes/OT vinculada: recibe el ticket ya resuelto (por id o por
+// número+pertenencia, según el llamador) y arma el mismo DTO reducido.
+export async function construirDetalleTicketPortal(ticket: Ticket) {
   // Excluye nota_interna con un WHERE en la consulta (Not(...) → `tipo <> @0`), nunca con un
   // filtro en memoria (mismo criterio ya previsto para el portal desde la Fase 3, ver
   // entities/MensajeTicket.ts).
   const mensajes = await AppDataSource.getRepository(MensajeTicket).find({
-    where: { ticketId, tipo: Not(TipoMensajeTicket.NOTA_INTERNA) },
+    where: { ticketId: ticket.id, tipo: Not(TipoMensajeTicket.NOTA_INTERNA) },
     order: { creadoEn: "ASC" },
   });
 
@@ -162,7 +163,7 @@ export async function obtenerTicketPortal(ticketId: string) {
        LEFT JOIN usuario r ON r.id = o.responsable_actual_id
        WHERE tv.ticket_id = @0
        ORDER BY tv.es_origen DESC, tv.creado_en ASC`,
-      [ticketId],
+      [ticket.id],
     );
 
   const ot = otsVinculadas[0]
@@ -170,4 +171,10 @@ export async function obtenerTicketPortal(ticketId: string) {
     : null;
 
   return toPortalTicket(ticket, mensajes, ot);
+}
+
+export async function obtenerTicketPortal(ticketId: string) {
+  const ticket = await AppDataSource.getRepository(Ticket).findOne({ where: { id: ticketId } });
+  if (!ticket) throw ticketNoEncontrado();
+  return construirDetalleTicketPortal(ticket);
 }
