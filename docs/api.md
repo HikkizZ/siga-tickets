@@ -86,6 +86,51 @@ Documento vivo: lista **todos los endpoints implementados**. La fuente de verdad
 
 ---
 
+## Departamentos (Fase B1)
+
+Catálogo simple, mismo patrón que `Clientes`: sin `DELETE` (se desactiva con `activo`, mismo criterio que `cliente.activo`). Asignable opcionalmente a un usuario (`usuario.departamentoId`, metadata pura, sin endpoint propio en esta fase — no cambia ninguna lógica de permisos ni de ruteo existente) y a un tema de ayuda (`departamentoId` sugerido, ver más abajo).
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/departamentos` | lectura | `[{ id, nombre, activo }]` ordenado por nombre |
+| POST | `/departamentos` | admin | Body `{ nombre }` → `201`. `409 CONFLICT` si el nombre existe |
+| PATCH | `/departamentos/:id` | admin | Body `{ nombre?, activo? }` |
+
+```json
+{ "status": "ok", "data": { "id": "…", "nombre": "Soporte técnico", "activo": true } }
+```
+
+---
+
+## Temas de ayuda (Fase B1)
+
+Catálogo inspirado en osTicket ("Help Topics"), aditivo: no reemplaza `categoria` de OT/Ticket ni ningún estado fijo. Asignable opcionalmente a un ticket (`POST /tickets`, ver la sección "Tickets" más abajo); sin ninguna conexión automática a SLA, a OT ni a `categoria` en esta fase.
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/temas-ayuda` | lectura | Lista completa, ordenada por `orden` y luego `nombre` |
+| POST | `/temas-ayuda` | admin | Body `{ nombre, activo?, esPublico?, departamentoId?, prioridadSugerida?, orden? }` → `201`. `409 CONFLICT` si el nombre existe |
+| PATCH | `/temas-ayuda/:id` | admin | Body parcial (mismos campos que `POST`; `departamentoId`/`prioridadSugerida` aceptan `null` para desasignar) |
+
+```
+GET /api/v1/temas-ayuda
+```
+```json
+{ "status": "ok", "data": [{
+  "id": "…", "nombre": "Falla de hardware", "activo": true, "esPublico": true,
+  "departamento": { "id": "…", "nombre": "Soporte técnico" },
+  "prioridadSugerida": "alta", "orden": 0
+}] }
+```
+
+- `departamentoId`: si viene, debe ser un departamento existente (`400 DEPARTAMENTO_INVALIDO`); no se exige que esté activo (un departamento desactivado después puede seguir siendo la sugerencia por defecto). `departamento` en la respuesta va embebido `{id, nombre}` (cascada de lectura tema→departamento), o `null` si no tiene.
+- `prioridadSugerida` ∈ `alta|media|baja`, opcional.
+- `esPublico`: si aparece como opción en el portal público (fase futura) o es solo interno; por defecto `true`.
+- `orden`: entero, por defecto `0`; ordena el listado antes del nombre. Editable en cualquier momento.
+- **Sin ningún comportamiento automático**: elegir un tema no autocompleta prioridad ni departamento en el ticket (decisión de UX que queda para una fase posterior de frontend).
+
+---
+
 ## OT
 
 ### GET /ots — lista paginada · lectura
@@ -320,11 +365,13 @@ GET /api/v1/tickets?sinAsignar=true&prioridad=alta&orden=fechaIngreso&dir=asc
 ```json
 { "asunto": "No enciende el equipo", "descripcion": "El PC de recepción no enciende",
   "solicitanteNombre": "Juan Pérez", "solicitanteEmail": "juan@cliente.cl", "solicitanteTelefono": "+56...",
-  "solicitanteEmpresa": "…", "clienteId": "…", "canal": "telefono", "prioridad": "media" }
+  "solicitanteEmpresa": "…", "clienteId": "…", "canal": "telefono", "prioridad": "media",
+  "temaAyudaId": "…" }
 ```
 - `canal` ∈ `telefono|presencial|interno` **solamente** (`portal`/`correo` son de fases futuras: el portal público y la ingesta de correo crean tickets por otro camino) → si no, `400 VALIDATION_ERROR`.
 - `recepcionadoPorId` **no** se acepta: sale del token (`400` si se envía, `.strict()`).
 - `clienteId` opcional; si viene, debe ser un cliente existente y activo (`400 CLIENTE_INVALIDO`).
+- `temaAyudaId` opcional (Fase B1); si viene, debe ser un tema de ayuda existente y activo (`400 TEMA_AYUDA_INVALIDO`). Solo se guarda: sin ningún efecto automático sobre prioridad, SLA ni `categoria`. No editable por `PATCH /tickets/:id` en esta fase.
 - Nace **sin responsable** (`responsable: null`) y en estado `nuevo`: alguien lo debe tomar (`POST /tickets/:id/tomar`), incluido quien lo creó si quiere.
 - Folio `TK-xxxx` consecutivo sin huecos; evento `creado`.
 
@@ -337,7 +384,8 @@ GET /api/v1/tickets?sinAsignar=true&prioridad=alta&orden=fechaIngreso&dir=asc
 ```json
 { "id": "…", "numero": "TK-0001", "asunto": "…", "descripcion": "…",
   "solicitanteNombre": "…", "solicitanteEmail": "…", "solicitanteTelefono": null, "solicitanteEmpresa": null,
-  "cliente": null, "canal": "telefono", "prioridad": "media", "estado": "abierto",
+  "cliente": null, "temaAyuda": { "id": "…", "nombre": "Falla de hardware" },
+  "canal": "telefono", "prioridad": "media", "estado": "abierto",
   "fechaIngreso": "…", "recepcionadoPor": { "id": "…", "nombre": "…" },
   "responsable": { "id": "…", "nombre": "…" },
   "primeraRespuestaEn": "…|null", "resueltoEn": null, "cerradoEn": null,
@@ -354,6 +402,7 @@ GET /api/v1/tickets?sinAsignar=true&prioridad=alta&orden=fechaIngreso&dir=asc
   "ots": [{ "id": "…", "numero": "OT-1041", "titulo": "…", "estado": "ingresado", "esOrigen": true }],
   "eventos": [{ "id": "5", "tipo": "tomado", "actor": {…}, "payload": { "usuarioId": "…" }, "ocurridoEn": "…" }] }
 ```
+- `temaAyuda` (Fase B1): `{id, nombre}` del tema asignado en la creación, o `null` si no tiene. Mismo criterio que `cliente`/`responsable`: solo referencia, sin datos del departamento sugerido (ver `GET /temas-ayuda` para eso).
 - `cadenaResponsables`: vacía si el ticket nunca se tomó (nace sin responsable, no abre tramo hasta el primer `tomar`/`derivar`). Mismo formato que OT.
 - `mensajes`: el hilo completo, en orden cronológico, **incluye notas internas** (esto es el panel interno, no el portal). Cada mensaje trae sus propios `adjuntos` (los re-parentados a él); `adjuntos` a nivel de ticket son los que aún no se asociaron a ningún mensaje ("sueltos").
 - `ots`: OT(s) vinculadas vía `ticket_ot`, la de origen primero.
@@ -478,6 +527,36 @@ Body `{ "fecha": "2026-09-18", "nombre": "Fiestas Patrias", "irrenunciable": tru
 ### DELETE /sla/feriados/:fecha · admin
 
 `200 { data: null }`. Fecha inexistente → `404 FERIADO_NO_ENCONTRADO`. Sin endpoint para editar `calendario_laboral` en esta fase (el horario semanal se siembra por migración; se edita solo por script/BD).
+
+---
+
+## Planes SLA (Fase B2)
+
+Catálogo administrable por un admin de Planes SLA **con nombre propio** (tabla `plan_sla`), distinto de `sla_config` (que son 3 filas fijas por prioridad, sección anterior). Mismos 5 campos de configuración que `sla_config`, pero acá puede haber muchos planes, cada uno activable/desactivable con `activo`.
+
+**Alcance deliberadamente acotado**: por ahora esto es solo un catálogo CRUD. Ningún cálculo real de SLA de OT/ticket lo usa todavía — `sla_config` sigue siendo la única fuente real del cálculo de vencimiento — y no existe ninguna relación desde OT/Ticket hacia `plan_sla`. Conectarlos es una decisión de una fase posterior.
+
+`PlanSla`: `{ id, nombre, activo, horasResolucion, horasPrimeraRespuesta, usarHorasHabiles, pausarEnEsperaCliente, umbralPorVencer, creadoEn, actualizadoEn }`.
+
+### GET /sla/planes · lectura
+
+`200 { data: [PlanSla] }` ordenado por `nombre`.
+
+### POST /sla/planes · admin
+
+```json
+{ "nombre": "Premium 4h", "horasResolucion": 4, "horasPrimeraRespuesta": 1,
+  "usarHorasHabiles": true, "pausarEnEsperaCliente": true, "umbralPorVencer": 0.2 }
+```
+Todos los campos de configuración son opcionales salvo `nombre`, `horasResolucion` y `horasPrimeraRespuesta` (mismas validaciones que `PUT /sla/config`: horas entero > 0, `umbralPorVencer` en (0,1]). `activo` opcional, por defecto `true`. Nombre duplicado → `409 CONFLICT`. → `201 { data: PlanSla }`.
+
+### PATCH /sla/planes/:id · admin
+
+Body parcial (cualquier campo de `PlanSla` salvo `id`/`creadoEn`/`actualizadoEn`, incluido `nombre` y `activo`). Sin campos → `400 VALIDATION_ERROR`. Nombre duplicado → `409 CONFLICT`. Id inexistente → `404 NOT_FOUND`. → `200 { data: PlanSla }`.
+
+### DELETE /sla/planes/:id · admin
+
+A diferencia de Departamentos/Temas de ayuda, un Plan SLA **sí se borra de verdad**: hoy no hay ninguna FK que apunte a `plan_sla`. Id inexistente → `404 NOT_FOUND`. → `200 { data: null }`.
 
 ---
 
@@ -704,6 +783,24 @@ Body parcial (`.strict()`, solo se actualiza lo que se envía — mismo criterio
 - Si todavía no existe la fila, `PUT` la crea (upsert) con esta llamada como primer valor.
 - `actualizadoEn`/`actualizadoPorId` se fijan solos en cada `PUT` (auditoría simple, sin tabla de eventos aparte).
 - → `200` con el mismo formato que el GET (sin contraseñas). `puerto` fuera de 1–65535, o un campo con el tipo equivocado → `400 VALIDATION_ERROR`.
+
+---
+
+## Plantillas de correo (Fase B2)
+
+Catálogo administrable por un admin de las 3 plantillas de correo saliente (`ticket_creado`, `aviso_soporte`, `respuesta_cliente` — los mismos 3 nombres que `mail/outbound/plantillas.ts::NombrePlantilla`), tabla `plantilla_correo`. Cada plantilla es texto (`asunto`/`cuerpoHtml`) con placeholders `{{campo}}` (p. ej. `{{numero}}`, `{{asunto}}`, `{{nombreSolicitante}}`, `{{correoSolicitante}}`, `{{cuerpo}}` — el conjunto exacto depende de cada plantilla, ver los `Datos*` de `plantillas.ts`).
+
+**Fallback seguro**: `correo.service.ts::encolarCorreo` renderiza con `renderPlantillaConfigurable()`, que cae al texto fijo de siempre (`renderPlantilla()`) si no hay fila para esa plantilla, si `activa=false`, o si la interpolación falla por cualquier motivo (p. ej. un placeholder que no existe en los datos de esa plantilla) — una plantilla mal configurada nunca rompe el envío de un correo. Cada placeholder se interpola con la misma `escapeHtml()` que ya usaba el texto fijo: sigue siendo texto de usuario final insertado ahí, aunque la plantilla la haya editado un admin.
+
+`PlantillaCorreo`: `{ nombre, asunto, cuerpoHtml, activa, personalizada, actualizadoEn }`. `personalizada` indica si hay una fila real en BD para ese `nombre` (`false` = se está mostrando el texto fijo actual, solo para que el frontend tenga algo que mostrar antes de personalizar).
+
+### GET /correo/plantillas · lectura
+
+`200 { data: [PlantillaCorreo] }`, siempre las 3, en el mismo orden de `NombrePlantilla` (`ticket_creado`, `aviso_soporte`, `respuesta_cliente`). Para la que no tiene fila en BD, `personalizada:false` y `actualizadoEn:null`, con `asunto`/`cuerpoHtml` mostrando una representación en placeholders del texto fijo actual (documentada en `services/plantillaCorreo.service.ts`, solo para mostrar — el envío real nunca usa este texto, siempre `renderPlantilla()`).
+
+### PUT /correo/plantillas/:nombre · admin
+
+`:nombre` ∈ `ticket_creado|aviso_soporte|respuesta_cliente` (otro valor → `400 VALIDATION_ERROR`). Body `{ "asunto": "...", "cuerpoHtml": "...", "activa"?: true }` (`.strict()`; `activa` opcional, por defecto `true` en la creación). Upsert: si no existía fila para ese `nombre`, la crea; si existía, la reemplaza. → `200 { data: PlantillaCorreo }` (con `personalizada:true`).
 
 ---
 

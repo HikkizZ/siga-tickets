@@ -17,7 +17,9 @@ const ORDEN_LIMPIEZA = [
   "correo_ingerido",
   "mailbox_cursor",
   "configuracion_correo",
+  "plantilla_correo",
   "sla_pausa",
+  "plan_sla",
   "feriado",
   "notificacion",
   "adjunto",
@@ -32,8 +34,10 @@ const ORDEN_LIMPIEZA = [
   "asignacion",
   "ot",
   "ticket",
+  "tema_ayuda",
   "cliente",
   "usuario",
+  "departamento",
 ];
 
 export async function conectarBD(): Promise<void> {

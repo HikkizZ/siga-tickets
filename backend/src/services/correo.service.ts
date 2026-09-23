@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { env } from "../config/env.js";
 import { CorreoSaliente } from "../entities/CorreoSaliente.js";
-import { renderPlantilla, type DatosAvisoSoporte, type DatosRespuestaCliente, type DatosTicketCreado } from "../mail/outbound/plantillas.js";
+import { renderPlantillaConfigurable, type DatosAvisoSoporte, type DatosRespuestaCliente, type DatosTicketCreado } from "../mail/outbound/plantillas.js";
 import type { ManagerTransaccional } from "./folio.service.js";
 
 // Message-ID propio, único, con formato válido de RFC 5322 (<id-local@dominio>).
@@ -47,7 +47,9 @@ export type EncolarCorreoInput =
 export async function encolarCorreo(manager: ManagerTransaccional, input: EncolarCorreoInput): Promise<string> {
   const messageId = input.messageId ?? generarMessageId();
   const referencias = await messageIdAnterior(manager, input.numero);
-  const { asunto, cuerpoHtml } = renderPlantilla(input.plantilla, input.datos);
+  // Fase B2: renderPlantillaConfigurable consulta si hay una plantilla personalizada activa en BD
+  // para input.plantilla y, si no, cae sola al texto fijo (ver mail/outbound/plantillas.ts).
+  const { asunto, cuerpoHtml } = await renderPlantillaConfigurable(input.plantilla, input.datos);
 
   const headers: Record<string, string> = {
     "Message-ID": messageId,

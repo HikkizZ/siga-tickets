@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+const NOMBRES_PLANTILLA = ["ticket_creado", "aviso_soporte", "respuesta_cliente"] as const;
+
+// Fase B2: PUT /correo/plantillas/:nombre. `nombre` restringido a las 3 plantillas fijas que ya
+// conoce mail/outbound/plantillas.ts::NombrePlantilla.
+export const actualizarPlantillaCorreoReq = {
+  params: z.object({ nombre: z.enum(NOMBRES_PLANTILLA) }),
+  body: z
+    .object({
+      asunto: z.string().trim().min(1, "El asunto es obligatorio").max(500),
+      cuerpoHtml: z.string().trim().min(1, "El cuerpo es obligatorio"),
+      activa: z.boolean().optional(),
+    })
+    .strict(),
+};
+
 // Puerto de red válido (1-65535), entero.
 const puerto = z.number({ invalid_type_error: "debe ser un número" }).int("debe ser un entero").min(1).max(65535);
 

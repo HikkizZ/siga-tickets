@@ -1,4 +1,5 @@
-import { Column, CreateDateColumn, Entity, PrimaryColumn } from "typeorm";
+import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryColumn } from "typeorm";
+import { Departamento } from "./Departamento.js";
 import { Rol } from "./enums.js";
 import { uuidTransformer } from "./transformers.js";
 
@@ -34,6 +35,15 @@ export class Usuario {
 
   @Column({ type: "bit", default: false })
   mustChangePassword!: boolean;
+
+  // Fase B1: metadata pura (catálogo Departamento), un usuario puede pertenecer a uno o a
+  // ninguno; no cambia ninguna lógica de permisos ni de ruteo existente.
+  @Column({ type: "uniqueidentifier", transformer: uuidTransformer, nullable: true })
+  departamentoId!: string | null;
+
+  @ManyToOne(() => Departamento, { nullable: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "departamento_id" })
+  departamento!: Departamento | null;
 
   @CreateDateColumn({ type: "datetimeoffset", precision: 3 })
   creadoEn!: Date;

@@ -27,6 +27,8 @@ export const crearTicketReq = {
       clienteId: uuid("clienteId inválido").optional(),
       canal: canalInterno,
       prioridad: z.nativeEnum(Prioridad),
+      // Fase B1, aditivo: sin conexión todavía a SLA ni a ningún comportamiento automático.
+      temaAyudaId: uuid("temaAyudaId inválido").optional(),
     })
     .strict(),
 };

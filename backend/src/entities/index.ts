@@ -7,6 +7,7 @@ import { ConfiguracionCorreo } from "./ConfiguracionCorreo.js";
 import { CorreoIngerido } from "./CorreoIngerido.js";
 import { CorreoSaliente } from "./CorreoSaliente.js";
 import { Cotizacion } from "./Cotizacion.js";
+import { Departamento } from "./Departamento.js";
 import { EtapaOt } from "./EtapaOt.js";
 import { Evento } from "./Evento.js";
 import { Feriado } from "./Feriado.js";
@@ -17,8 +18,11 @@ import { MensajeTicket } from "./MensajeTicket.js";
 import { Notificacion } from "./Notificacion.js";
 import { Ot } from "./Ot.js";
 import { OtColaborador } from "./OtColaborador.js";
+import { PlanSla } from "./PlanSla.js";
+import { PlantillaCorreo } from "./PlantillaCorreo.js";
 import { SlaConfig } from "./SlaConfig.js";
 import { SlaPausa } from "./SlaPausa.js";
+import { TemaAyuda } from "./TemaAyuda.js";
 import { Ticket } from "./Ticket.js";
 import { TicketOt } from "./TicketOt.js";
 import { Usuario } from "./Usuario.js";
@@ -33,6 +37,7 @@ export const entidades = [
   CorreoIngerido,
   CorreoSaliente,
   Cotizacion,
+  Departamento,
   EtapaOt,
   Evento,
   Feriado,
@@ -43,8 +48,11 @@ export const entidades = [
   Notificacion,
   Ot,
   OtColaborador,
+  PlanSla,
+  PlantillaCorreo,
   SlaConfig,
   SlaPausa,
+  TemaAyuda,
   Ticket,
   TicketOt,
   Usuario,

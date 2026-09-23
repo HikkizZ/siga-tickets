@@ -6,6 +6,7 @@ import { Asignacion } from "../entities/Asignacion.js";
 import { Cliente } from "../entities/Cliente.js";
 import { Evento } from "../entities/Evento.js";
 import { MensajeTicket } from "../entities/MensajeTicket.js";
+import { TemaAyuda } from "../entities/TemaAyuda.js";
 import { Ticket } from "../entities/Ticket.js";
 import { CanalTicket, EntidadAdjunto, EntidadAsignable, EntidadEvento, EstadoTicket, type Prioridad } from "../entities/enums.js";
 import { AppError } from "../errors/AppError.js";
@@ -26,6 +27,14 @@ const ref = (id: string | null | undefined, nombre: string | null | undefined): 
 export async function exigirClienteActivoTicket(manager: ManagerTransaccional, clienteId: string): Promise<void> {
   const c = await manager.findOne(Cliente, { where: { id: clienteId } });
   if (!c || !c.activo) throw new AppError(400, "CLIENTE_INVALIDO", "clienteId debe ser un cliente existente y activo");
+}
+
+// Fase B1: mismo criterio que exigirClienteActivoTicket (FK opcional validada dentro de la misma
+// transacción). Sin conexión a SLA ni a ningún comportamiento automático todavía: solo se valida
+// que exista y esté activo antes de guardarlo.
+export async function exigirTemaAyudaActivo(manager: ManagerTransaccional, temaAyudaId: string): Promise<void> {
+  const t = await manager.findOne(TemaAyuda, { where: { id: temaAyudaId } });
+  if (!t || !t.activo) throw new AppError(400, "TEMA_AYUDA_INVALIDO", "temaAyudaId debe ser un tema de ayuda existente y activo");
 }
 
 // ------------------------------------------------------------------ filtros / listado
@@ -136,7 +145,7 @@ export const toMensajeDto = (m: MensajeTicket, adjuntos: AdjuntoDto[]) => ({
 export async function obtenerDetalleTicket(id: string) {
   const ticket = await AppDataSource.getRepository(Ticket).findOne({
     where: { id },
-    relations: { cliente: true, recepcionadoPor: true, responsableActual: true },
+    relations: { cliente: true, recepcionadoPor: true, responsableActual: true, temaAyuda: true },
   });
   if (!ticket) throw ticketNoEncontrado();
 
@@ -191,6 +200,9 @@ export async function obtenerDetalleTicket(id: string) {
     solicitanteTelefono: ticket.solicitanteTelefono,
     solicitanteEmpresa: ticket.solicitanteEmpresa,
     cliente: ticket.cliente ? { id: ticket.cliente.id, nombre: ticket.cliente.nombre } : null,
+    // Fase B1: dato guardado y devuelto, sin ningún efecto automático (mismo criterio que otros
+    // campos de referencia ya expuestos como cliente/responsable).
+    temaAyuda: ticket.temaAyuda ? { id: ticket.temaAyuda.id, nombre: ticket.temaAyuda.nombre } : null,
     canal: ticket.canal,
     prioridad: ticket.prioridad,
     estado: ticket.estado,
@@ -265,12 +277,14 @@ export interface CrearTicketInput {
   clienteId?: string | undefined;
   canal: "telefono" | "presencial" | "interno";
   prioridad: Prioridad;
+  temaAyudaId?: string | undefined;
 }
 
 export async function crearTicket(actor: UsuarioActor, input: CrearTicketInput) {
   const ticketId = randomUUID();
   await enTransaccion(AppDataSource, async (m) => {
     if (input.clienteId) await exigirClienteActivoTicket(m, input.clienteId);
+    if (input.temaAyudaId) await exigirTemaAyudaActivo(m, input.temaAyudaId);
 
     const numero = await siguienteFolio(m, "TK");
     // fechaIngreso explícita (mismo motivo que crearOt en ot.service.ts): los dos vencimientos de
@@ -289,6 +303,7 @@ export async function crearTicket(actor: UsuarioActor, input: CrearTicketInput) 
         solicitanteTelefono: input.solicitanteTelefono ?? null,
         solicitanteEmpresa: input.solicitanteEmpresa ?? null,
         clienteId: input.clienteId ?? null,
+        temaAyudaId: input.temaAyudaId ?? null,
         canal: input.canal as CanalTicket,
         prioridad: input.prioridad,
         estado: EstadoTicket.NUEVO,

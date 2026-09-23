@@ -7,6 +7,8 @@ import { ActualizadoEnSubscriber } from "../entities/ActualizadoEnSubscriber.js"
 import { EsquemaInicial1789948800000 } from "../migrations/1789948800000-EsquemaInicial.js";
 import { MailboxCursor1790000000000 } from "../migrations/1790000000000-MailboxCursor.js";
 import { ConfiguracionCorreo1790100000000 } from "../migrations/1790100000000-ConfiguracionCorreo.js";
+import { DepartamentosYTemasAyuda1790200000000 } from "../migrations/1790200000000-DepartamentosYTemasAyuda.js";
+import { PlanSlaYPlantillaCorreo1790300000000 } from "../migrations/1790300000000-PlanSlaYPlantillaCorreo.js";
 
 export const AppDataSource = new DataSource({
   type: "mssql",
@@ -27,5 +29,11 @@ export const AppDataSource = new DataSource({
   synchronize: false,
   entities: entidades,
   subscribers: [ActualizadoEnSubscriber],
-  migrations: [EsquemaInicial1789948800000, MailboxCursor1790000000000, ConfiguracionCorreo1790100000000],
+  migrations: [
+    EsquemaInicial1789948800000,
+    MailboxCursor1790000000000,
+    ConfiguracionCorreo1790100000000,
+    DepartamentosYTemasAyuda1790200000000,
+    PlanSlaYPlantillaCorreo1790300000000,
+  ],
 });

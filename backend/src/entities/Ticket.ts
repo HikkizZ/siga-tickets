@@ -1,6 +1,7 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, OneToMany, PrimaryColumn } from "typeorm";
 import { Cliente } from "./Cliente.js";
 import { MensajeTicket } from "./MensajeTicket.js";
+import { TemaAyuda } from "./TemaAyuda.js";
 import { Usuario } from "./Usuario.js";
 import { CanalTicket, EstadoTicket, Prioridad, SlaEstado } from "./enums.js";
 import { uuidTransformer } from "./transformers.js";
@@ -90,6 +91,15 @@ export class Ticket {
 
   @Column({ type: "uniqueidentifier", default: () => "NEWID()", unique: true, transformer: uuidTransformer })
   tokenPublico!: string;
+
+  // Fase B1: tema de ayuda opcional (catálogo TemaAyuda), aditivo. No reemplaza `categoria` (que
+  // no existe en Ticket) y no dispara ningún comportamiento automático todavía.
+  @Column({ type: "uniqueidentifier", transformer: uuidTransformer, nullable: true })
+  temaAyudaId!: string | null;
+
+  @ManyToOne(() => TemaAyuda, { nullable: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "tema_ayuda_id" })
+  temaAyuda!: TemaAyuda | null;
 
   @OneToMany(() => MensajeTicket, (m) => m.ticket, { cascade: true })
   mensajes!: MensajeTicket[];
