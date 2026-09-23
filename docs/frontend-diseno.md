@@ -1614,3 +1614,133 @@ clientes) en vez de renombrados, porque el nombre ya deja claro que son de prueb
 alcanza para que no aparezcan como opción activa en ningún selector nuevo. Backend/frontend propios
 de esta verificación (puertos 3011/3012) quedaron **detenidos**; ningún otro servicio del entorno
 se tocó.
+
+## Fase E1 — tablero compacto y detalle de ticket centrado en conversación (post-cierre, en paralelo con E2)
+
+Trabajo nuevo, fuera de la numeración 0–6, hecho en paralelo con la Fase E2 (directorio de
+clientes) — sin tocar `clientes.tsx` ni ningún archivo de esa fase. Pedido del usuario: las
+tarjetas del Tablero se pierden de foco cuando hay volumen ("deberían ser más pequeñas"), y el
+detalle de ticket debería parecerse más a cómo se responde un correo en osTicket — la conversación
+como elemento central, con un botón claro para pasar a OT cuando corresponda. Rediseño puramente
+visual: ningún hook, endpoint ni lógica de datos cambió.
+
+### Tablero — tarjetas compactas
+
+- `src/routes/index.tsx` — `Tarjeta` ahora tiene dos ramas de render (`compacto`/cómoda) en vez de
+  clases condicionales línea por línea: son dos densidades visualmente distintas (número+título+
+  prioridad en una línea, SLA+responsable+fecha en otra, sin el bloque de cliente ni el respiro
+  entre secciones), no una variación menor de una sola tarjeta. Se agregó un toggle "Compacto/
+  Cómodo" en la barra de filtros (icono `LayoutGrid`/`LayoutList` de `lucide-react`) que alterna la
+  prop `compacto` pasada a cada `Tarjeta` de las 6 columnas y el alto de los `Skeleton` de carga.
+  La preferencia se guarda en `localStorage` (clave `siga-ot:tablero-densidad`, mismo prefijo que
+  `src/lib/auth/token.ts`) con el mismo patrón try/catch + guard de `typeof window` ya usado ahí —
+  se lee en un `useEffect` (no en el estado inicial) para no desalinear el render de servidor con
+  el de cliente. La tarjeta cómoda (diseño original) no cambió de estructura, solo ganó
+  `line-clamp-2` en el título y `truncate` en la línea de cliente para no crecer con títulos largos.
+  Ningún filtro, agrupación por estado ni el clic para abrir el detalle cambiaron.
+- **Bandeja de tickets (`src/routes/tickets.tsx`)**: no se tocó. El pedido decía explícitamente "el
+  tablero" (el kanban de `/`), y la bandeja de tickets ya es una tabla de filas de una sola línea
+  por ticket (no tarjetas), sin el problema de densidad que motivó el pedido — aplicar el mismo
+  criterio ahí no tenía un problema real que resolver.
+
+### Detalle de ticket — rediseño centrado en conversación
+
+`src/components/TicketDetail.tsx` (882 líneas) se dividió en subcomponentes nuevos bajo
+`src/components/ticket-detail/`, mismo patrón que `src/components/configuracion/SeccionX.tsx`
+(Fase B): un archivo por responsabilidad, `TicketDetail.tsx` queda como orquestador delgado
+(hooks de nivel superior, estado de los 3 diálogos, `Sheet`/header).
+
+- `TicketConversacion.tsx` — el hilo de mensajes + compositor de respuesta (toggle respuesta/nota
+  interna, adjuntar, enviar), ahora el elemento central: es lo primero que sigue al header/franja
+  de metadatos, sin las 4 secciones grandes que antes había que scrollear (grilla de 9 campos,
+  cadena de responsables, órdenes de trabajo) para llegar a responder. Dueño de su propio estado
+  local (`texto`, `interna`, `adjuntosBorrador`) — antes vivía en `TicketDetail.tsx`.
+  Reutiliza `useAgregarMensajeTicket`/`useSubirAdjuntoTicket`/`useCambiarEstadoTicket` sin cambios.
+- `TicketMetadatos.tsx` — barra lateral (`lg:` a la derecha de la conversación; en pantallas
+  angostas, franja compacta arriba de la conversación por orden natural del DOM en `flex-col`).
+  Encabeza con "Convertir en OT": una tarjeta con borde y fondo `primary/5`, ícono, texto
+  explicativo ("¿Este ticket requiere trabajo facturable o interno?") y un botón de ancho completo
+  — con peso visual propio, no un botón más entre otros. "Vincular a OT existente" queda como
+  enlace de texto chico debajo, acción secundaria a propósito. Debajo: si el ticket ya tiene OT
+  vinculada(s), aparecen en una lista compacta con "Desvincular"; luego estado/prioridad
+  (editables), responsable actual (+ Tomar/Derivar), cliente, tema de ayuda y vencimiento SLA —
+  todo "de un vistazo", sin competir en tamaño con la conversación. Solicitante, fecha de ingreso,
+  recepcionado por, primera respuesta y la cadena de responsables completa quedan en un
+  `Collapsible` ("Más detalles", cerrado por defecto): son de consulta ocasional, no perdieron
+  funcionalidad, solo prioridad visual.
+- `TicketExtras.tsx` — adjuntos sueltos del ticket e historial de actividad, cada uno en su propio
+  `Collapsible` cerrado por defecto, al final de la columna de conversación. Mismo criterio que
+  "Más detalles": de consulta ocasional.
+- `TicketDialogos.tsx` — `DialogoConvertirEnOT` y `DialogoVincularOT`, reubicados tal cual desde
+  `TicketDetail.tsx` (ningún cambio de lógica, solo de archivo).
+- `TicketDetail.tsx` — el `Sheet` se ensanchó (`sm:max-w-2xl lg:max-w-4xl xl:max-w-5xl`, antes fijo
+  en `sm:max-w-2xl`) para que la barra lateral quepa junto a la conversación en pantallas anchas.
+  El header quedó en una sola franja compacta (número + badges de estado/prioridad/canal/SLA +
+  asunto + descripción truncada a 2 líneas) — el estado ahora usa `EstadoTicketBadge` de
+  `TicketBadges.tsx` (ya existía, no se usaba en este componente) en vez de un `<span>` manual.
+
+**Layout de dos columnas vs. panel plegable**: se implementó dos columnas en pantallas anchas
+(`lg:flex-row` con `lg:order-1`/`lg:order-2` para que la conversación quede primero en el DOM y a
+la izquierda visualmente) y apilado en angostas — sin JavaScript de `matchMedia`: en `flex-col`
+(por debajo de `lg`) el orden del DOM ya pone los metadatos compactos arriba de la conversación de
+forma natural, así que no hizo falta un hook de breakpoint como `useIsMobile` (que existe en el
+proyecto pero con un umbral distinto, 768px, pensado para otro uso). Dentro de los metadatos, sí se
+usa un `Collapsible` (cerrado por defecto, igual en angosto y en ancho) para la parte secundaria —
+más simple que sincronizar su estado por defecto con el viewport, y el costo (un clic extra para
+ver la cadena de responsables completa) es bajo frente a la ganancia de no competir con la
+conversación por espacio en pantallas angostas.
+
+### Verificación
+
+`npx tsc --noEmit` limpio (confirmado después de terminar ambas partes).
+
+Recorrido real en navegador (backend `npm run dev` contra la BD real `siga-tickets` puerto 3002,
+frontend `npm run dev` — el 8080 de `.claude/launch.json` estaba ocupado por Docker Desktop en este
+equipo, Vite cayó solo al primer puerto libre, **8083** —, MCP de navegador). El panel de navegador
+de esta sesión ya tenía abierta una pestaña de la Fase E2 (paralela, puerto 3012): todas las
+acciones de esta verificación se dirigieron explícitamente a la pestaña propia (`tabId`) para no
+interferir con esa sesión.
+
+1. Admin desechable nuevo por variables de entorno al script `seed.ts`
+   (`SEED_ADMIN_USERNAME=qa_felipe_admin_e1`, contraseña propia de un solo uso generada con
+   `openssl rand -hex 16`, nunca impresa ni guardada en ningún archivo del repo).
+2. Tablero: confirmado visualmente que "Compacto" reduce cada tarjeta a dos líneas (número+título+
+   prioridad, SLA+responsable+fecha) sin perder prioridad ni SLA de vista; "Cómodo" vuelve al
+   diseño original. La preferencia sobrevivió una recarga completa de página (`localStorage`
+   confirmado).
+3. Ticket TK-0002 ("No enciende el equipo de recepcion"): la conversación aparece completa sin
+   scrollear más allá del header, con el compositor pegado al hilo. Se envió una respuesta al
+   cliente real (`POST /tickets/:id/mensajes`, tipo `respuesta_cliente`) y una nota interna (mismo
+   endpoint, tipo `nota_interna`) — ambas aparecieron en el hilo con su badge correcto de inmediato.
+4. "Derivar" (a `Administrador`, con motivo) → responsable actual cambió y quedó reflejado en la
+   barra lateral. "Convertir en OT" (botón prominente) → diálogo pre-llenado, `POST
+   /tickets/:id/convertir-a-ot` creó **OT-1044**, que apareció en la lista de "Órdenes de trabajo"
+   de la barra lateral con badge "Origen" y botón "Desvincular". Se probó "Desvincular" (la sección
+   desapareció) y luego "Vincular a OT existente" sobre **OT-1041** (búsqueda con debounce,
+   `POST /tickets/:id/ots`) — volvió a aparecer en la lista.
+5. Ticket TK-0004: "Tomar" sobre un ticket sin asignar → responsable pasó a estar asignado con
+   botón "Derivar" disponible. Selects de Estado/Prioridad confirmados funcionales (cambios
+   reflejados de inmediato en los badges del header).
+6. Ticket TK-0006: confirmado que "Tema de ayuda" (cuando el ticket lo tiene) se sigue mostrando
+   ("Consulta de ventas QA") en la barra lateral, sin cambios respecto a la Fase 3.
+7. "Más detalles" (`Collapsible` de la barra lateral) y los dos colapsables de `TicketExtras`
+   (Adjuntos del ticket, Historial de actividad) probados: expanden y muestran solicitante, fecha
+   de ingreso, recepcionado por, primera respuesta, cadena de responsables completa, el adjunto
+   subido en la Fase 3 y el historial de eventos — mismos datos que antes, solo colapsados por
+   defecto.
+8. Viewport angosto (390×844, emulado): confirmado que los metadatos (incluida la tarjeta
+   "Convertir en OT") aparecen compactos arriba de "Conversación", y que esta última —con su
+   compositor— es visible sin scroll adicional relevante.
+9. Consola revisada con `read_console_messages` (`onlyErrors`) y `read_network_requests`: sin
+   `TypeError` ni `Uncaught` en todo el recorrido; los únicos errores de red corresponden a intentos
+   de login fallidos hechos desde `curl` fuera del navegador (rate limit del backend) y a checks de
+   RBAC ya documentados en fases anteriores, ninguno originado por los componentes nuevos (los
+   cuatro archivos de `ticket-detail/` cargaron 200 OK en las requests de Vite).
+
+Al terminar: `qa_felipe_admin_e1` **no** se pudo desactivar a sí mismo (`409 CONFLICT`, mismo
+bloqueo ya documentado desde la Fase 0) — queda activo en `siga-tickets` con una contraseña de un
+solo uso que no quedó en ningún archivo del repo. El frontend propio de esta verificación (puerto
+8083) quedó **detenido**. El backend (puerto 3002) se dejó **corriendo**: es la instancia
+compartida contra la BD real y, al momento de cerrar esta fase, el panel de navegador todavía tenía
+abierta la sesión paralela de la Fase E2 contra ese mismo backend — detenerlo habría cortado esa
+sesión en curso, así que se dejó como estaba para no interferir con trabajo ajeno en curso.
