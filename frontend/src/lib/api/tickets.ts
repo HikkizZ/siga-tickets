@@ -89,6 +89,10 @@ export type MensajeTicket = {
 
 export type OtEmbebidaTicket = { id: string; numero: string; titulo: string; estado: string; esOrigen: boolean };
 
+// Tema de ayuda asignado en la creación (Fase B1, opcional). Solo referencia — el departamento/
+// prioridad sugerida de ese tema se consultan en /temas-ayuda, no vienen embebidos acá.
+export type TemaAyudaRefTicket = { id: string; nombre: string } | null;
+
 export type EventoTicket = { id: string; tipo: string; actor: UsuarioRef; payload: Record<string, unknown>; ocurridoEn: string };
 
 export type TicketDetalle = {
@@ -101,6 +105,7 @@ export type TicketDetalle = {
   solicitanteTelefono: string | null;
   solicitanteEmpresa: string | null;
   cliente: ClienteRefTicket;
+  temaAyuda: TemaAyudaRefTicket;
   canal: CanalTicket;
   prioridad: Prioridad;
   estado: EstadoTicket;
@@ -142,6 +147,9 @@ export type CrearTicketInput = {
   clienteId?: string;
   canal: CanalTicketCreacion;
   prioridad: Prioridad;
+  // Tema de ayuda opcional (Fase B1): solo se guarda, sin ningún efecto automático sobre
+  // prioridad, SLA ni categoría (docs/api.md).
+  temaAyudaId?: string;
 };
 
 export async function crearTicket(input: CrearTicketInput): Promise<TicketDetalle> {

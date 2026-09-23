@@ -1374,3 +1374,149 @@ entorno de desarrollo persistente antes de empezar esta verificación (no los le
 así que se dejaron **corriendo** en el mismo estado en que se encontraron — confirmado con
 `curl http://localhost:3002/health` (`200`) y `http://localhost:8082/` (`200`) después de la
 limpieza.
+
+## Fase B — catálogos de configuración y tema de ayuda (post-cierre del plan de 7 fases)
+
+Trabajo nuevo, fuera de la numeración 0–6: el backend agregó cuatro catálogos administrables
+(`docs/api.md`, secciones "Departamentos (Fase B1)", "Temas de ayuda (Fase B1)", "Planes SLA (Fase
+B2)", "Plantillas de correo (Fase B2)") más un campo `temaAyudaId` opcional en `POST /tickets`
+(`temaAyuda` embebido en `GET /tickets/:id`). Esta sección cubre el frontend completo: cuatro
+secciones nuevas en `/configuracion` y el selector opcional de tema de ayuda en "Nuevo ticket" +
+su lectura en el detalle del ticket.
+
+Archivos nuevos:
+
+- `src/lib/api/departamentos.ts`, `src/lib/api/temasAyuda.ts`, `src/lib/api/planesSla.ts`,
+  `src/lib/api/plantillasCorreo.ts` — funciones de red puras, un archivo por catálogo, mismo
+  patrón que `sla.ts`/`correoConfig.ts`. `temasAyuda.ts` reexporta el tipo `Prioridad` de
+  `labels.ts` para `prioridadSugerida`; `planesSla.ts` reutiliza los mismos 5 campos de
+  configuración que `SlaConfigFila` pero como un tipo propio (`PlanSla`, con `id`/`nombre`/
+  `creadoEn`/`actualizadoEn`, sin relación de tipos con `sla.ts` — son catálogos distintos, aunque
+  compartan forma). `plantillasCorreo.ts` agrega `PLACEHOLDERS_PLANTILLA` (mapa fijo de qué
+  `{{campo}}` acepta cada una de las 3 plantillas, tomado literal de `docs/api.md`) para el texto
+  de ayuda del formulario.
+- `src/hooks/useDepartamentos.ts`, `src/hooks/useTemasAyuda.ts`, `src/hooks/usePlanesSla.ts`,
+  `src/hooks/usePlantillasCorreo.ts` — un hook de TanStack Query por operación, mismo criterio que
+  `useSla.ts`/`useCorreoConfig.ts`. Ningún catálogo nuevo invalida `["ots"]`/`["tickets"]`: a
+  diferencia de `useActualizarSlaConfig`, nada de esta fase recalcula SLA ni afecta datos ya
+  embebidos en OT/ticket (Planes SLA es un catálogo sin conexión real todavía; Temas de ayuda solo
+  se lee al crear un ticket, no se recalcula nada al editarlo).
+- `src/components/configuracion/SeccionDepartamentos.tsx`,
+  `src/components/configuracion/SeccionTemasAyuda.tsx`,
+  `src/components/configuracion/SeccionPlanesSla.tsx`,
+  `src/components/configuracion/SeccionPlantillasCorreo.tsx` — a diferencia de Feriados/Correo
+  (Fase A, componentes locales dentro de `configuracion.tsx`), estas 4 secciones se dividieron en
+  archivos propios bajo `src/components/configuracion/`: con SLA + Feriados + Correo ya en el
+  archivo, sumar 4 secciones más (una de ellas, Temas de ayuda, con un formulario de crear/editar
+  compartido) habría dejado `configuracion.tsx` por encima de 1300 líneas. Se dividió para las 4 a
+  la vez (ninguna a medias), mismo criterio de consistencia pedido.
+
+Editado:
+
+- `src/lib/labels.ts` — se agregaron `puedeEscribirDepartamentos`, `puedeEscribirTemasAyuda`,
+  `puedeEscribirPlanesSla`, `puedeEscribirPlantillasCorreo` (los 4 `rol === "admin"`, igual que
+  `puedeEscribirSla`/`puedeEscribirCorreoConfig`); una función propia por superficie en vez de
+  reutilizar una sola, mismo criterio ya documentado en Fase 3/Fase A para no acoplar superficies
+  que hoy comparten condición pero podrían divergir. El resto del archivo no cambió.
+- `src/routes/configuracion.tsx` — se agregaron los `import` de las 4 secciones nuevas y sus 4
+  bloques (encabezado con ícono + `<SeccionX puedeEscribir={...}>`) debajo de "Correo", sin tocar
+  SLA/Feriados/Correo. Mismo patrón visual (tarjeta + tabla + formulario inline) que el resto del
+  archivo.
+- `src/lib/api/tickets.ts` — se agregó `TemaAyudaRefTicket` (`{id,nombre}|null`), el campo
+  `temaAyuda` en `TicketDetalle` y `temaAyudaId?: string` opcional en `CrearTicketInput`.
+- `src/routes/nuevo-ticket.tsx` — se agregó `useTemasAyuda()` (filtrado a `activo`, mismo criterio
+  que el filtro `activo && username !== "sistema"` de usuarios en fases anteriores) y un `<Select>`
+  "Tema de ayuda (opcional)" en la sección "Solicitud", después de Prioridad; se manda
+  `temaAyudaId` en el `POST /tickets` solo si se eligió uno. Sin autocompletado de prioridad ni
+  departamento al elegir un tema (a propósito — el backend tampoco lo hace todavía).
+- `src/components/TicketDetail.tsx` — se agregó el campo de solo lectura "Tema de ayuda"
+  (`ticket.temaAyuda?.nombre ?? "—"`) junto a "Cliente", en la misma grilla de campos de
+  clasificación. Sin edición: no existe `PATCH` de `temaAyudaId` en el backend.
+
+### Decisiones dentro del espacio permitido
+
+- **Confirmación de borrado en Planes SLA**: no había ningún patrón de confirmación ya establecido
+  en el proyecto (se revisó `configuracion.tsx` completo — "Eliminar feriado" no confirma nada) ni
+  un componente `AlertDialog` en uso (existe el archivo base de shadcn, pero ningún componente lo
+  importaba). Se usó `window.confirm()` — el camino más simple, sin inventar un patrón de diálogo
+  nuevo para un único botón.
+- **Departamento/prioridad sugerida en el formulario de Temas de ayuda**: como ambos campos
+  aceptan `null` para desasignar (`docs/api.md`) y Radix `<Select>` no admite `value=""` en un
+  `<SelectItem>`, se usó el mismo criterio de sentinel que ya usa el filtro `TODOS` de
+  `src/routes/tickets.tsx` (`SIN_DEPARTAMENTO`/`SIN_PRIORIDAD`, valores internos que nunca
+  colisionan con un uuid real ni con los 3 valores de `Prioridad`).
+- **Planes SLA: fila siempre de solo lectura salvo "Editar"**: a diferencia de la tabla de SLA por
+  prioridad (Fase 4, 3 filas fijas, siempre editable si `puedeEscribir`), acá el número de filas es
+  variable y create/editar/eliminar conviven en la misma tabla — se optó por que cada fila entre en
+  modo edición solo al pulsar el lápiz (estado local `editando` en `FilaPlan`, componente por fila),
+  para no tener N formularios simultáneos abiertos. El toggle "Activo" queda siempre disponible sin
+  entrar a edición (mismo criterio que Departamentos/Temas de ayuda).
+- **Plantillas de correo: sin editor WYSIWYG**: el enunciado ya lo dejaba explícito (el contenido
+  real ES el HTML con placeholders) — un `<Textarea>` de texto plano por plantilla, con una
+  representación `<pre>` de solo lectura para roles sin permiso de escritura.
+
+## Fase B — verificación
+
+`npx tsc --noEmit` limpio.
+
+**Nota de infraestructura de esta verificación**: el backend/frontend persistentes de `docker
+compose` (puertos 3002/8082, ya corriendo desde la Fase A) resultaron estar sirviendo una imagen
+**anterior** a los routers de Fase B (`404 NOT_FOUND` real en `GET /api/v1/departamentos` contra
+ese backend, confirmado con `curl`) — el volumen montado no recargó esos archivos nuevos a tiempo
+para esta sesión. Sin privilegios para reiniciar contenedores de este entorno (bloqueado por el
+clasificador de modo automático), se levantó un backend propio (`npm run dev`, puerto **3005**) y
+un frontend propio (`vite dev --port 8083`, con `VITE_API_URL` apuntado a `3005` solo mientras
+duró la verificación) para probar el código real contra la BD real `siga-tickets`, sin tocar los
+contenedores. `frontend/.env.local` y ambos `.claude/launch.json` quedaron **revertidos** a su
+contenido original al terminar (confirmado con `git status`, sin diff fuera de los archivos de la
+fase). Recomendación para quien retome: los contenedores `siga-ot-backend`/`siga-ot-worker`
+necesitan un `docker compose restart backend worker` (o rebuild) para servir las rutas de Fase B —
+no es un problema del código de esta fase.
+
+Recorrido real en navegador (backend propio puerto 3005 contra la BD real `siga-tickets`, frontend
+propio puerto 8083, MCP de navegador):
+
+1. Admin desechable nuevo vía `seed.ts` (`SEED_ADMIN_USERNAME=qa_felipe_admin_fb`, contraseña de
+   un solo uso generada con `openssl rand -hex 16`, nunca impresa en ningún archivo del repo) y,
+   con su token, un usuario `tecnico` real vía `POST /usuarios` (`qa_felipe_tec_fb`).
+2. Con `qa_felipe_admin_fb`: en `/configuracion`, se creó el departamento "Ventas QA"
+   (`POST /departamentos`, 201) y, con él, el tema de ayuda "Consulta de ventas QA"
+   (`POST /temas-ayuda` sin departamento/prioridad primero, luego editado con
+   `PATCH /temas-ayuda/:id` para fijar `departamentoId`/`prioridadSugerida: "alta"` — confirmado en
+   la respuesta de red que ambos quedaron seteados). Se creó un plan SLA ("Plan QA Prueba",
+   `POST /sla/planes`, 201) y se eliminó (`DELETE /sla/planes/:id`, 200 — la tabla volvió a "Sin
+   planes SLA registrados", confirmando que desaparece).
+3. Se personalizó la plantilla `aviso_soporte` (antes `personalizada:false`) con un asunto/cuerpo
+   de prueba → `PUT /correo/plantillas/aviso_soporte` (200) devolvió `personalizada:true`,
+   confirmando que el indicador cambia.
+4. En "Nuevo ticket": el selector "Tema de ayuda (opcional)" listó "Consulta de ventas QA" (recién
+   creado) y "Falla de hardware" (preexistente). Se creó el ticket TK-0006 con el tema elegido →
+   `POST /tickets` (201) devolvió `temaAyuda: {id, nombre: "Consulta de ventas QA"}`; abierto el
+   detalle desde la bandeja, el campo "Tema de ayuda" lo mostró correctamente.
+5. Con `qa_felipe_tec_fb` (técnico): las 4 secciones nuevas mostraron el aviso "Solo un
+   administrador puede…" y quedaron en solo lectura (sin `Input`/`Select`/botones de
+   crear-editar-eliminar; "Activo" sin switch interactivo) — confirmado con `get_page_text`.
+6. Consola del navegador revisada con `read_console_messages`: sin `TypeError` ni `Uncaught` en
+   ningún punto del recorrido; los únicos `error` fueron los `404` del backend viejo (paso previo a
+   levantar el backend propio en 3005, antes de la nota de infraestructura) y los `403` esperados
+   de RBAC del backend (`GET /usuarios` admin-only, ya documentado desde la Fase 0).
+7. **Hallazgo de la herramienta de navegador (no del código)**: el `confirm()` nativo del botón
+   "Eliminar" de Planes SLA queda suprimido por el navegador automatizado de esta sesión (siempre
+   devuelve `false`), así que el flujo de borrado con confirmación real se verificó sobreescribiendo
+   `window.confirm` a `() => true` solo para esta sesión de prueba (no es un cambio de código) y
+   confirmando el `DELETE` real contra el backend.
+
+Al terminar: `qa_felipe_tec_fb` quedó desactivado (`PATCH /usuarios/:id {activo:false}`, `200`). El
+admin de prueba `qa_felipe_admin_fb` **no** se pudo desactivar a sí mismo (`409 CONFLICT`, mismo
+bloqueo ya documentado desde la Fase 0); queda activo en `siga-tickets` con una contraseña de un
+solo uso que no quedó en ningún archivo del repo. Datos de catálogo dejados en `siga-tickets`:
+el departamento "Ventas QA" y el tema "Consulta de ventas QA" quedaron **desactivados**
+(`activo:false`, mismo criterio que el resto del catálogo — no hay `DELETE` para ninguno de los
+dos) en vez de borrados; el ticket TK-0006 se dejó tal cual (no hay `DELETE` de tickets, mismo
+criterio que fases anteriores); la plantilla `aviso_soporte` se restauró al texto fijo original
+(`PUT` con el mismo `asunto`/`cuerpoHtml` que `TEXTO_FIJO_PARA_MOSTRAR` en
+`plantillaCorreo.service.ts`), aunque queda `personalizada:true` de forma permanente porque el
+contrato no tiene un `DELETE` que revierta esa bandera. Backend/frontend propios de esta
+verificación (puertos 3005/8083) quedaron **detenidos**; el `docker compose` persistente
+(3002/8082) se dejó exactamente como se encontró (corriendo, con el código de antes de Fase B —
+ver nota de infraestructura arriba).

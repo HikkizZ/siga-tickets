@@ -12,6 +12,7 @@ import type { CanalTicketCreacion } from "@/lib/api/tickets";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useClientes } from "@/hooks/useClientes";
 import { useCrearTicket } from "@/hooks/useTickets";
+import { useTemasAyuda } from "@/hooks/useTemasAyuda";
 import { useOTStore } from "@/lib/ot-store";
 
 export const Route = createFileRoute("/nuevo-ticket")({
@@ -66,6 +67,7 @@ function NuevoTicket() {
   const { usuario } = useAuth();
   const { abrirTicket } = useOTStore();
   const { data: clientes } = useClientes();
+  const { data: temasAyuda } = useTemasAyuda();
   const crearTicket = useCrearTicket();
   const navigate = useNavigate();
 
@@ -77,7 +79,12 @@ function NuevoTicket() {
   const [descripcion, setDescripcion] = useState("");
   const [canal, setCanal] = useState<CanalTicketCreacion>("telefono");
   const [prioridad, setPrioridad] = useState<Prioridad>("media");
+  const [temaAyudaId, setTemaAyudaId] = useState("");
   const [guardando, setGuardando] = useState(false);
+
+  // Solo temas activos: uno desactivado no debería ofrecerse en un ticket nuevo (mismo criterio
+  // que el filtro de clientes/usuarios activos de fases anteriores).
+  const temasActivos = (temasAyuda ?? []).filter((t) => t.activo);
 
   const listo = nombre.trim() !== "" && email.trim() !== "" && asunto.trim() !== "" && descripcion.trim() !== "";
 
@@ -95,6 +102,7 @@ function NuevoTicket() {
         ...(clienteId ? { clienteId } : {}),
         canal,
         prioridad,
+        ...(temaAyudaId ? { temaAyudaId } : {}),
       });
       abrirTicket(ticket.id);
       navigate({ to: "/tickets" });
@@ -198,6 +206,22 @@ function NuevoTicket() {
                 {PRIORIDADES.map((p) => (
                   <SelectItem key={p} value={p}>
                     {etiquetaPrioridad(p)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Campo>
+          <Campo etiqueta="Tema de ayuda (opcional)">
+            <Select value={temaAyudaId} onValueChange={setTemaAyudaId}>
+              <SelectTrigger className="h-10 text-sm">
+                <span className={temaAyudaId ? "" : "text-muted-foreground"}>
+                  {temasActivos.find((t) => t.id === temaAyudaId)?.nombre ?? "Selecciona un tema (opcional)"}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                {temasActivos.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.nombre}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -171,3 +171,27 @@ export function puedeEscribirSla(rol: Rol): boolean {
 export function puedeEscribirCorreoConfig(rol: Rol): boolean {
   return rol === "admin";
 }
+
+// Departamentos (Fase B1): POST/PATCH /departamentos son admin-only, GET es lectura para
+// cualquier rol autenticado (docs/api.md, sección "Departamentos (Fase B1)").
+export function puedeEscribirDepartamentos(rol: Rol): boolean {
+  return rol === "admin";
+}
+
+// Temas de ayuda (Fase B1): POST/PATCH /temas-ayuda son admin-only, mismo criterio que
+// Departamentos (docs/api.md, sección "Temas de ayuda (Fase B1)").
+export function puedeEscribirTemasAyuda(rol: Rol): boolean {
+  return rol === "admin";
+}
+
+// Planes SLA (Fase B2): POST/PATCH/DELETE /sla/planes son admin-only, igual que sla_config
+// (docs/api.md, sección "Planes SLA (Fase B2)").
+export function puedeEscribirPlanesSla(rol: Rol): boolean {
+  return rol === "admin";
+}
+
+// Plantillas de correo (Fase B2): PUT /correo/plantillas/:nombre es admin-only, GET es lectura
+// para cualquier rol autenticado (docs/api.md, sección "Plantillas de correo (Fase B2)").
+export function puedeEscribirPlantillasCorreo(rol: Rol): boolean {
+  return rol === "admin";
+}

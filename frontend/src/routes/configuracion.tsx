@@ -1,18 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Calendar, Check, Mail, Settings, ShieldAlert, Trash2 } from "lucide-react";
+import { Building2, Calendar, Check, FileText, Mail, Settings, ShieldAlert, Tag, Trash2, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { PrioridadBadge } from "@/components/Prioridad";
+import { SeccionDepartamentos } from "@/components/configuracion/SeccionDepartamentos";
+import { SeccionTemasAyuda } from "@/components/configuracion/SeccionTemasAyuda";
+import { SeccionPlanesSla } from "@/components/configuracion/SeccionPlanesSla";
+import { SeccionPlantillasCorreo } from "@/components/configuracion/SeccionPlantillasCorreo";
 import { formatoFecha } from "@/lib/mock-data";
 import {
   etiquetaPrioridad,
   PRIORIDADES,
   puedeEscribirCorreoConfig,
+  puedeEscribirDepartamentos,
+  puedeEscribirPlanesSla,
+  puedeEscribirPlantillasCorreo,
   puedeEscribirSla,
+  puedeEscribirTemasAyuda,
   type Prioridad,
 } from "@/lib/labels";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -277,6 +285,59 @@ function Configuracion() {
       </div>
 
       <SeccionCorreo puedeEscribir={puedeEscribirCorreoConfig(usuario?.rol ?? "lectura")} />
+
+      <div className="mt-10 flex items-center gap-3">
+        <span className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+          <Building2 className="size-5" />
+        </span>
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Departamentos</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Catálogo simple de departamentos, usado como sugerencia en los temas de ayuda.
+          </p>
+        </div>
+      </div>
+      <SeccionDepartamentos puedeEscribir={puedeEscribirDepartamentos(usuario?.rol ?? "lectura")} />
+
+      <div className="mt-10 flex items-center gap-3">
+        <span className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+          <Tag className="size-5" />
+        </span>
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Temas de ayuda</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Clasificación opcional para "Nuevo ticket", sin efecto automático sobre prioridad ni SLA.
+          </p>
+        </div>
+      </div>
+      <SeccionTemasAyuda puedeEscribir={puedeEscribirTemasAyuda(usuario?.rol ?? "lectura")} />
+
+      <div className="mt-10 flex items-center gap-3">
+        <span className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+          <Timer className="size-5" />
+        </span>
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Planes SLA</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Catálogo con nombre propio, distinto del SLA por prioridad de arriba. Todavía sin conexión a
+            ninguna OT o ticket.
+          </p>
+        </div>
+      </div>
+      <SeccionPlanesSla puedeEscribir={puedeEscribirPlanesSla(usuario?.rol ?? "lectura")} />
+
+      <div className="mt-10 flex items-center gap-3">
+        <span className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+          <FileText className="size-5" />
+        </span>
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Plantillas de correo</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Asunto y cuerpo (HTML con placeholders) de los 3 correos salientes automáticos.
+          </p>
+        </div>
+      </div>
+      <SeccionPlantillasCorreo puedeEscribir={puedeEscribirPlantillasCorreo(usuario?.rol ?? "lectura")} />
     </div>
   );
 }

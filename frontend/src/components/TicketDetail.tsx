@@ -506,6 +506,7 @@ export function TicketDetail({ ticketId, onClose }: { ticketId: string | null; o
                   <span className="text-xs text-muted-foreground">{ticket.solicitanteEmail ?? "—"}</span>
                 </Campo>
                 <Campo etiqueta="Cliente">{ticket.cliente?.nombre ?? "—"}</Campo>
+                <Campo etiqueta="Tema de ayuda">{ticket.temaAyuda?.nombre ?? "—"}</Campo>
                 <Campo etiqueta="Ingreso">{formatoFechaHora(new Date(ticket.fechaIngreso))}</Campo>
                 <Campo etiqueta="Estado del ticket">
                   <Select value={ticket.estado} onValueChange={(v) => cambiarEstado.mutate({ id: ticket.id, estado: v as EstadoTicketBackend })}>
