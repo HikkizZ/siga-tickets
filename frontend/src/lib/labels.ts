@@ -158,3 +158,10 @@ export function puedeEscribirCotizaciones(rol: Rol): boolean {
 export function puedeConvertirTickets(rol: Rol): boolean {
   return rol === "admin" || rol === "gestion";
 }
+
+// SLA (Fase 4): a diferencia de cotizaciones/tickets, PUT /sla/config y POST/DELETE
+// /sla/feriados son admin-only, sin excepción para gestion (docs/api.md, sección "SLA y
+// notificaciones (Fase 4)").
+export function puedeEscribirSla(rol: Rol): boolean {
+  return rol === "admin";
+}

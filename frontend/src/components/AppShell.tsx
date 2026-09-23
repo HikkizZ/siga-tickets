@@ -36,13 +36,21 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { nivelPrimeraRespuesta, nivelSla, primeraRespuesta } from "@/lib/mock-data";
+import { nivelSla } from "@/lib/mock-data";
 import { useOTStore } from "@/lib/ot-store";
 import { OTDetail } from "@/components/OTDetail";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { etiquetaRol } from "@/lib/labels";
 import { useUsuarios } from "@/hooks/useUsuarios";
 import { useClientes } from "@/hooks/useClientes";
+import {
+  useMarcarNotificacionLeida,
+  useMarcarTodasNotificacionesLeidas,
+  useNotificaciones,
+  useNotificacionesNoLeidasTotal,
+  useResumenNotificaciones,
+} from "@/hooks/useNotificaciones";
+import type { Notificacion as NotificacionReal } from "@/lib/api/notificaciones";
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -54,9 +62,36 @@ const nav = [
   { to: "/configuracion", label: "Configuración", icon: Settings },
 ];
 
+/** Fecha relativa simple ("hace 12 min") para el timestamp real de cada notificación — el mock
+ * traía la fecha ya como texto ("hace 12 min"), el backend entrega `creadoEn` en ISO. */
+function fechaRelativa(iso: string): string {
+  const minutos = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (minutos < 1) return "hace unos segundos";
+  if (minutos < 60) return `hace ${minutos} min`;
+  const horas = Math.round(minutos / 60);
+  if (horas < 24) return `hace ${horas} h`;
+  return `hace ${Math.round(horas / 24)} d`;
+}
+
 function Notificaciones() {
-  const { notificaciones, marcarNotificacionesLeidas } = useOTStore();
-  const noLeidas = notificaciones.filter((n) => !n.leida).length;
+  const { abrirOT, abrirTicket } = useOTStore();
+  const navigate = useNavigate();
+  const { data: lista } = useNotificaciones({ perPage: 20 });
+  const { data: noLeidas = 0 } = useNotificacionesNoLeidasTotal();
+  const marcarLeida = useMarcarNotificacionLeida();
+  const marcarTodas = useMarcarTodasNotificacionesLeidas();
+
+  // Clic en una notificación: si no estaba leída, se marca; si apunta a una OT o un ticket
+  // (derivación, sla_por_vencer, sla_vencida), abre esa entidad. Otros tipos (p. ej.
+  // correo_fallido) solo se marcan como leídos, sin navegación.
+  const alHacerClic = (n: NotificacionReal) => {
+    if (n.leidaEn === null) marcarLeida.mutate(n.id);
+    if (n.entidadTipo === "ot") abrirOT(n.entidadId);
+    else if (n.entidadTipo === "ticket") {
+      abrirTicket(n.entidadId);
+      navigate({ to: "/tickets" });
+    }
+  };
 
   return (
     <Popover>
@@ -64,7 +99,7 @@ function Notificaciones() {
         <Bell className="size-[18px]" />
         {noLeidas > 0 && (
           <span className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-alta text-[10px] font-semibold text-primary-foreground">
-            {noLeidas}
+            {noLeidas > 9 ? "9+" : noLeidas}
           </span>
         )}
       </PopoverTrigger>
@@ -72,31 +107,38 @@ function Notificaciones() {
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-sm font-semibold">Notificaciones</span>
           <button
-            onClick={marcarNotificacionesLeidas}
-            className="text-xs text-primary transition-colors hover:underline"
+            onClick={() => marcarTodas.mutate()}
+            disabled={marcarTodas.isPending || noLeidas === 0}
+            className="text-xs text-primary transition-colors hover:underline disabled:pointer-events-none disabled:opacity-40"
           >
             Marcar todas como leídas
           </button>
         </div>
         <Separator />
         <ul className="max-h-80 overflow-y-auto">
-          {notificaciones.map((n) => (
-            <li
-              key={n.id}
-              className={cn(
-                "flex gap-3 border-b border-border px-4 py-3 text-sm last:border-0",
-                !n.leida && "bg-accent/50",
-              )}
-            >
-              <span
-                className={cn("mt-1.5 size-2 shrink-0 rounded-full", n.leida ? "bg-border" : "bg-primary")}
-              />
-              <div>
-                <p className={cn("leading-snug", !n.leida && "font-medium")}>{n.texto}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{n.fecha}</p>
-              </div>
-            </li>
-          ))}
+          {lista?.items.length === 0 && (
+            <li className="px-4 py-6 text-center text-sm text-muted-foreground">Sin notificaciones.</li>
+          )}
+          {lista?.items.map((n) => {
+            const noLeida = n.leidaEn === null;
+            return (
+              <li key={n.id} className={cn("border-b border-border last:border-0", noLeida && "bg-accent/50")}>
+                <button
+                  onClick={() => alHacerClic(n)}
+                  className="flex w-full gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-accent/60"
+                >
+                  <span
+                    className={cn("mt-1.5 size-2 shrink-0 rounded-full", noLeida ? "bg-primary" : "bg-border")}
+                  />
+                  <div className="min-w-0">
+                    <p className={cn("leading-snug", noLeida && "font-medium")}>{n.titulo}</p>
+                    <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{n.cuerpo}</p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">{fechaRelativa(n.creadoEn)}</p>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       </PopoverContent>
     </Popover>
@@ -343,8 +385,15 @@ function MenuPerfil() {
   );
 }
 
+type ClaveResumen =
+  | "otVencidas"
+  | "otPrioridadAltaAbiertas"
+  | "otPendientesCotizarOAprobar"
+  | "ticketsNuevosSinResponder";
+
 function ResumenInicio() {
-  const { ots, tickets, sla, slaRespuesta } = useOTStore();
+  const { abrirOT, abrirTicket } = useOTStore();
+  const navigate = useNavigate();
   const [abierto, setAbierto] = useState(false);
 
   useEffect(() => {
@@ -354,37 +403,84 @@ function ResumenInicio() {
     setAbierto(true);
   }, []);
 
-  const vencidas = ots.filter((o) => nivelSla(o, sla) === "Vencida").length;
-  const urgentes = ots.filter((o) => o.prioridad === "Alta" && o.estado !== "Facturado").length;
-  const porCotizar = ots.filter((o) => o.estado === "Ingresado" || o.estado === "En cotización").length;
-  const ticketsNuevos = tickets.filter((t) => !primeraRespuesta(t)).length;
-  const ticketsFueraSla = tickets.filter((t) => nivelPrimeraRespuesta(t, slaRespuesta) === "Vencido").length;
+  // Solo se pide GET /notificaciones/resumen cuando el diálogo se va a mostrar (no en cada carga
+  // de la app): "habilitado" en useResumenNotificaciones controla el `enabled` de la query.
+  const { data: resumen } = useResumenNotificaciones(abierto);
 
-  const filas = [
-    { valor: vencidas, texto: "OT con SLA vencido", tono: "text-alta" },
-    { valor: urgentes, texto: "OT de prioridad alta abiertas", tono: "text-media" },
-    { valor: porCotizar, texto: "OT pendientes por cotizar o aprobar", tono: "text-foreground" },
-    { valor: ticketsNuevos, texto: "tickets nuevos sin responder", tono: "text-primary" },
-    { valor: ticketsFueraSla, texto: "tickets sin responder fuera de SLA", tono: "text-alta" },
+  const irAItem = (clave: ClaveResumen, id: string) => {
+    setAbierto(false);
+    if (clave === "ticketsNuevosSinResponder") {
+      abrirTicket(id);
+      navigate({ to: "/tickets" });
+    } else {
+      abrirOT(id);
+    }
+  };
+
+  const hoy = new Date()
+    .toLocaleDateString("es-CL", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })
+    .replace(",", "");
+
+  const filas: { clave: ClaveResumen; bloque: { total: number; items: { id: string; numero: string }[] } | undefined; texto: string; tono: string }[] = [
+    { clave: "otVencidas", bloque: resumen?.otVencidas, texto: "OT con SLA vencido", tono: "text-alta" },
+    {
+      clave: "otPrioridadAltaAbiertas",
+      bloque: resumen?.otPrioridadAltaAbiertas,
+      texto: "OT de prioridad alta abiertas",
+      tono: "text-media",
+    },
+    {
+      clave: "otPendientesCotizarOAprobar",
+      bloque: resumen?.otPendientesCotizarOAprobar,
+      texto: "OT pendientes por cotizar o aprobar",
+      tono: "text-foreground",
+    },
+    {
+      clave: "ticketsNuevosSinResponder",
+      bloque: resumen?.ticketsNuevosSinResponder,
+      texto: "tickets nuevos sin responder",
+      tono: "text-primary",
+    },
   ];
 
   return (
     <Dialog open={abierto} onOpenChange={setAbierto}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Resumen del día · jue 10 sep 2026</DialogTitle>
+          <DialogTitle>Resumen del día · {hoy}</DialogTitle>
         </DialogHeader>
-        <ul className="space-y-2">
-          {filas.map((f) => (
-            <li
-              key={f.texto}
-              className="flex items-center gap-3 rounded-md border border-border bg-card px-3 py-2.5"
-            >
-              <span className={cn("w-8 text-right font-mono text-lg font-semibold", f.tono)}>{f.valor}</span>
-              <span className="text-sm text-muted-foreground">{f.texto}</span>
-            </li>
-          ))}
-        </ul>
+        <p className="-mt-2 text-xs text-muted-foreground">
+          Panorama de todo el equipo, no solo lo tuyo.
+        </p>
+        {!resumen ? (
+          <p className="py-4 text-center text-sm text-muted-foreground">Cargando…</p>
+        ) : (
+          <ul className="space-y-2">
+            {filas.map((f) => (
+              <li key={f.texto} className="rounded-md border border-border bg-card px-3 py-2.5">
+                <div className="flex items-center gap-3">
+                  <span className={cn("w-8 text-right font-mono text-lg font-semibold", f.tono)}>
+                    {f.bloque?.total ?? 0}
+                  </span>
+                  <span className="text-sm text-muted-foreground">{f.texto}</span>
+                </div>
+                {f.bloque && f.bloque.items.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5 pl-11">
+                    {f.bloque.items.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => irAItem(f.clave, item.id)}
+                        className="rounded border border-border bg-secondary/50 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                      >
+                        {item.numero}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
         <Button onClick={() => setAbierto(false)} className="w-full">
           Ir al tablero
         </Button>
@@ -509,6 +605,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const [colapsado, setColapsado] = useState(false);
   const [menuMovil, setMenuMovil] = useState(false);
+  // Reemplaza la fecha fija del mock ("jue 10 sep 2026") por la fecha real del navegador.
+  const fechaHoyBadge = new Date()
+    .toLocaleDateString("es-CL", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })
+    .replace(",", "");
 
   // El portal público de la mesa de ayuda y el login no usan el shell interno.
   if (path.startsWith("/login") || path.startsWith("/mesa-de-ayuda")) return <>{children}</>;
@@ -547,7 +647,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
           <BuscadorGlobal />
           <Badge variant="outline" className="ml-auto hidden font-mono text-[11px] font-normal lg:inline-flex">
-            jue 10 sep 2026
+            {fechaHoyBadge}
           </Badge>
           <Notificaciones />
           <div className="border-l border-border pl-2 sm:pl-3">

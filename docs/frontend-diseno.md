@@ -33,6 +33,7 @@ Confirmado antes de tocar nada: `npm install` limpio (414 paquetes, 0 vulnerabil
 - **Fase 1**: hecha (2026-09-23). Detalle abajo.
 - **Fase 2**: hecha (2026-09-23). Detalle abajo.
 - **Fase 3**: hecha (2026-09-23). Detalle abajo.
+- **Fase 4**: hecha (2026-09-23). Detalle abajo.
 
 ## Fase 0 — qué quedó
 
@@ -648,3 +649,213 @@ no quedó en ningún archivo del repo ni de logs (se roto una vez a mitad del re
 razón: nunca queda escrita, solo se usa al momento). Backend y frontend quedaron **detenidos** al
 terminar — confirmado con `curl` a `http://localhost:3002/health` y `http://localhost:8080/` (ambos
 sin respuesta, puertos verificados libres con `netstat`).
+
+## Fase 4 — qué quedó
+
+Archivos nuevos:
+
+- `src/lib/api/sla.ts` — funciones de red puras para SLA (mismo patrón que `ots.ts`/
+  `cotizaciones.ts`): tipo `SlaConfigFila` (las 3 filas `alta|media|baja` con sus 5 campos:
+  `horasResolucion`, `horasPrimeraRespuesta`, `usarHorasHabiles`, `pausarEnEsperaCliente`,
+  `umbralPorVencer`), `ActualizarSlaConfigFila` (parcial, para `PUT /sla/config`), `Feriado`, y una
+  función por endpoint: `obtenerSlaConfig`, `actualizarSlaConfig`, `obtenerFeriados`,
+  `crearFeriado`, `eliminarFeriado`.
+- `src/hooks/useSla.ts` — hooks de TanStack Query: `useSlaConfig`, `useFeriados` (lectura),
+  `useCrearFeriado`/`useEliminarFeriado` (invalidan `["sla","feriados"]`), y
+  `useActualizarSlaConfig`, que además de invalidar `["sla","config"]` invalida `["ots"]` y
+  `["tickets"]` completos — el backend recalcula en la misma transacción el vencimiento de toda
+  OT/ticket abierto de la prioridad editada (`docs/api.md`), así que las vistas de OT/tickets no
+  deben quedar con un SLA vencido desactualizado. Muestra `toast.success("Configuración de SLA
+  guardada.")`.
+- `src/lib/api/notificaciones.ts` — tipo `Notificacion` (`{id,tipo,entidadTipo,entidadId,titulo,
+  cuerpo,leidaEn,creadoEn}`, reemplaza el `Notificacion` mock que tenía `texto`/`leida`), tipo
+  `ResumenNotificaciones` (los 4 bloques `{total,items}` de `GET /notificaciones/resumen`), y
+  `obtenerNotificaciones`, `obtenerResumenNotificaciones`, `marcarNotificacionLeida`,
+  `marcarTodasNotificacionesLeidas`.
+- `src/hooks/useNotificaciones.ts` — `useNotificaciones(filtros)` (lista, `refetchInterval: 60_000`
+  porque el cron de SLA del backend corre cada 5 min, no hace falta polling agresivo),
+  `useNotificacionesNoLeidasTotal()` (pide `soloNoLeidas=true&perPage=1` y usa `meta.total` para el
+  contador exacto de la campana, sin depender del tamaño de página de la lista visible),
+  `useResumenNotificaciones(habilitado)` (solo pide `GET /notificaciones/resumen` cuando el diálogo
+  de inicio se va a mostrar, vía el flag `habilitado`), y `useMarcarNotificacionLeida`/
+  `useMarcarTodasNotificacionesLeidas` (invalidan todo el árbol `["notificaciones"]`).
+
+Editados:
+
+- `src/lib/labels.ts` — se agregó `puedeEscribirSla(rol)` (`rol === "admin"`, a diferencia de
+  `puedeEscribirCotizaciones`/`puedeConvertirTickets` que aceptan `gestion` también — `PUT
+  /sla/config` y `POST`/`DELETE /sla/feriados` son admin-only sin excepción, confirmado en
+  `docs/api.md`). El resto del archivo no cambió.
+- `src/lib/auth/AuthProvider.tsx` — **fix encontrado durante el recorrido de prueba, fuera del
+  alcance original pero necesario para que la campana funcionara de verdad**: `login()`/`logout()`
+  ahora llaman `queryClient.clear()`. Sin esto, cambiar de usuario dentro de la misma pestaña
+  (cerrar sesión y entrar con otro) dejaba servido el caché de TanStack Query del usuario anterior
+  — se detectó en vivo porque la campana de `qa_felipe_tec_f4` mostraba "Sin notificaciones."
+  después de loguearse, aunque `GET /notificaciones` (confirmado por `curl` con su propio token) sí
+  tenía una notificación real de derivación sin leer. Las query keys de ningún hook (de esta fase
+  ni de las anteriores) incluyen el id del usuario autenticado, así que TanStack Query no tenía
+  forma de saber que el usuario cambió; limpiar el caché en `login`/`logout` es la corrección
+  mínima y evita que un usuario vea por un instante datos cacheados de la sesión anterior en el
+  mismo navegador.
+- `src/routes/configuracion.tsx` — reescrita por completo: reemplaza `useOTStore().sla`/
+  `slaRespuesta`/`guardarSla`/`guardarSlaRespuesta` (mock, solo 2 horas por prioridad) por
+  `useSlaConfig()`/`useActualizarSlaConfig()` reales, con los 5 campos por fila (se agregaron los
+  controles que faltaban: dos `Switch` para `usarHorasHabiles`/`pausarEnEsperaCliente` y un `Input`
+  numérico para `umbralPorVencer`, rango `(0,1]`). Solo `admin` ve los controles de edición
+  (`puedeEscribirSla`); cualquier otro rol ve la misma tabla en texto plano, con un aviso explicando
+  el porqué. Se agregó una sección "Feriados" completamente nueva (no existía en el mock): tabla
+  (`GET /sla/feriados`), formulario de alta (`POST /sla/feriados`, fecha + nombre + checkbox
+  irrenunciable) y botón eliminar por fila (`DELETE /sla/feriados/:fecha`), con el mismo criterio
+  RBAC visual que la tabla de SLA. La columna "Por defecto" del mock (comparaba contra
+  `slaPorDefecto`/`slaRespuestaPorDefecto`, sin equivalente real) se quitó; el botón "Restaurar
+  valores por defecto" se reemplazó por "Descartar cambios" (vuelve al último valor del servidor,
+  no a un default fijo que ya no existe).
+- `src/components/AppShell.tsx` — tres piezas mock reemplazadas por datos reales:
+  - `Notificaciones()` (la campana): `useNotificaciones({perPage:20})` para la lista y
+    `useNotificacionesNoLeidasTotal()` para el contador exacto del badge. Muestra `titulo`/`cuerpo`
+    reales (el mock solo tenía `texto`) y una fecha relativa calculada en el cliente (`fechaRelativa()`,
+    nueva función local) a partir de `creadoEn` (el mock ya traía la fecha como texto fijo). Clic en
+    una notificación no leída la marca leída (`POST /notificaciones/:id/leer`, el mock no hacía nada
+    al clic); si `entidadTipo` es `"ot"` navega con `abrirOT(entidadId)` (el Sheet de OT es global,
+    no hace falta cambiar de ruta); si es `"ticket"` hace `abrirTicket(entidadId)` + `navigate({to:
+    "/tickets"})` (mismo patrón que ya usaba `BuscadorGlobal` para tickets, porque `TicketDetail`
+    solo está montado dentro de la ruta `/tickets`). Otros `entidadTipo` (p. ej. `correo_fallido`,
+    fuera del alcance de esta fase) solo se marcan como leídos, sin navegación. "Marcar todas como
+    leídas" ahora es `POST /notificaciones/leer-todas` real y se deshabilita cuando no hay no
+    leídas.
+  - `ResumenInicio()` (el diálogo de una vez por sesión): `useResumenNotificaciones(abierto)` — solo
+    pide el resumen cuando el diálogo se va a mostrar. Los **4** campos reales
+    (`otVencidas`, `otPrioridadAltaAbiertas`, `otPendientesCotizarOAprobar`,
+    `ticketsNuevosSinResponder`) reemplazan los 5 del mock; se quitó la fila "tickets sin responder
+    fuera de SLA" (sin equivalente real, no se inventó). Cada fila es clickeable por ítem
+    (`bloque.items`, hasta 5 `{id,numero}` que ya trae la respuesta): clic navega a esa OT/ticket con
+    el mismo criterio `abrirOT`/`abrirTicket`+navegar de la campana, y cierra el diálogo. Se agregó
+    el texto "Panorama de todo el equipo, no solo lo tuyo." (el resumen es de todo el equipo,
+    decisión documentada del backend, no un bug ni un descuido de RBAC). La fecha fija del título
+    ("jue 10 sep 2026") se reemplazó por la fecha real del navegador.
+  - El flujo del flag `sessionStorage["mostrar-resumen"]` (lo pone `login.tsx` al loguear con éxito)
+    no se tocó — sigue disparando el diálogo una sola vez por sesión, ahora con datos reales.
+  - `Badge` con la fecha fija del header (línea ~550 del archivo original, "jue 10 sep 2026", no era
+    parte del resumen ni de notificaciones pero estaba en el mismo archivo): se reemplazó por
+    `fechaHoyBadge`, calculada con `new Date()` al renderizar `AppShell`, mismo formato
+    (`es-CL`, corto).
+  - `notificaciones`/`marcarNotificacionesLeidas` de `useOTStore()` dejaron de usarse en este
+    archivo (era el único consumidor, confirmado por grep) — no se borraron del store
+    (`ot-store.tsx`) ni de `mock-data.ts` porque no era parte del alcance tocar esos archivos.
+
+Fuera de alcance, sin tocar: `BuscadorGlobal()` en `AppShell.tsx` (mock, Fase 6), `OTDetail.tsx`,
+`TicketDetail.tsx`, `cotizaciones.tsx`, dashboard (no existe, Fase 6), `mock-data.ts` (`SlaConfig`,
+`SlaRespuestaConfig`, `Notificacion`, `slaPorDefecto`, `slaRespuestaPorDefecto`,
+`notificacionesIniciales`, `nivelSla`, `nivelPrimeraRespuesta` siguen ahí — `ot-store.tsx` sigue
+inicializando `sla`/`slaRespuesta`/`notificaciones` desde esos valores, y `SidebarContenido`
+(badge "N con SLA vencido" del menú lateral), `linea-de-tiempo.tsx` y `dashboard.tsx` siguen
+llamando `nivelSla(ot, sla)` sobre el store mock — confirmado con grep antes de tocar nada, se
+dejó exactamente igual porque sigue en uso real fuera de esta fase), `ot-store.tsx` (`sla`,
+`slaRespuesta`, `guardarSla`, `guardarSlaRespuesta`, `notificaciones`, `marcarNotificacionesLeidas`
+siguen definidos ahí sin cambios, por la misma razón).
+
+### Decisiones dentro del espacio permitido
+
+- **RBAC admin-only de SLA**: `puedeEscribirSla(rol)` en `labels.ts`, función propia (no se
+  reutilizó `puedeEscribirCotizaciones`) porque el corte de rol es distinto: `PUT /sla/config` y
+  `POST`/`DELETE /sla/feriados` son admin-only sin excepción para `gestion`, a diferencia de
+  cotizaciones/tickets. La lectura (`GET /sla/config`, `GET /sla/feriados`) nunca se oculta, igual
+  que el criterio ya usado en cotizaciones/tickets.
+- **Clic para navegar en notificaciones y en el resumen**: se implementó en ambos lados (no se dejó
+  como "demasiado complejo"). El costo fue bajo porque el patrón ya existía
+  (`BuscadorGlobal.abrirOT`/`abrirTicket` + `navigate`, Fase 1) y `entidadId`/`items[].id` ya vienen
+  en la forma correcta (uuid real) sin transformación.
+- **`fix` en `AuthProvider.tsx` (`queryClient.clear()` en `login`/`logout`)**: no estaba en el
+  alcance escrito de la Fase 4, pero es la causa raíz de un bug real y reproducible que hacía
+  fallar la verificación de la campana (ver arriba). Se optó por corregirlo en vez de trabajar
+  alrededor (p. ej. forzando un refetch manual solo en `Notificaciones()`) porque el problema es
+  general a cualquier hook de TanStack Query de la app, no específico de notificaciones — dejarlo
+  sin corregir habría significado que cualquier fase futura tropezara con el mismo síntoma al
+  probar con dos usuarios en la misma pestaña.
+- **Encoding mangled en un `cuerpo` de prueba** (`"derivaci�n"` en vez de `"derivación"`, visible en
+  una captura del recorrido): es un artefacto de cómo se pasó el `motivo` por `curl -d` en una
+  consola Bash de Windows en la primera derivación de prueba, no un bug de la app — confirmado
+  repitiendo la derivación con un heredoc UTF-8 limpio, que se mostró correctamente en la campana.
+- **Umbral "por vencer" en modo lectura**: se muestra como porcentaje redondeado (`20%` en vez de
+  `0.2`) para que sea legible sin abrir el formulario de edición; en modo edición se mantiene el
+  valor decimal crudo que espera el backend, sin conversión con pérdida.
+
+## Fase 4 — verificación
+
+`npx tsc --noEmit` limpio (confirmado antes y después del fix de `AuthProvider.tsx`).
+
+Recorrido real en navegador (backend `npm run dev` contra la BD real `siga-tickets`, frontend
+`npm run dev` puerto 8080, MCP de navegador):
+
+1. Admin desechable nuevo por variables de entorno al script `seed.ts`
+   (`SEED_ADMIN_USERNAME=qa_felipe_admin_f4`, contraseña de un solo uso generada con `openssl rand
+   -hex 16`, nunca impresa como tal — se usó de inmediato para el login por API y se descartó) y,
+   con su token, un usuario `tecnico` (`qa_felipe_tec_f4`) vía `POST /usuarios`. Para probar el
+   login real en el navegador (que exige la contraseña en texto plano, no el JWT) se le fijó una
+   contraseña nueva de un solo uso a cada cuenta con `PATCH /usuarios/:id {password}` justo antes
+   de usarla en el formulario, y el archivo temporal que la contuvo se borró apenas se envió el
+   login — ninguna contraseña quedó en el repo ni en un archivo persistente.
+2. Con `qa_felipe_admin_f4` en `/configuracion`: la tabla de SLA cargó los 3 valores reales
+   (`alta 24/2h`, `media 72/8h`, `baja 120/24h`, horas hábiles y pausa en espera cliente activos,
+   umbral `0,2`) y la tabla de feriados cargó los 16 feriados reales de la semilla. Se cambió
+   "Resolución (h)" de Media de `72` a `48` → `Guardar cambios` → toast "Configuración de SLA
+   guardada." → recargando la página el valor `48` persistió (`GET /sla/config` real). Se confirmó
+   por `curl` que `GET /ots/:id` de una OT `media` abierta (OT-1042) recalculó
+   `slaResolucionVenceEn` de `2026-10-02T17:30:00.000Z` a `2026-09-30T12:30:00.000Z` en la misma
+   transacción del `PUT`, sin acción extra del frontend — y el detalle de esa OT en la UI mostró la
+   fecha nueva ("30-sept, 09:30 a. m.").
+3. Feriados: se agregó uno nuevo (`20-nov-2026`, "Feriado de prueba QA Fase 4") → apareció en la
+   tabla en su posición cronológica. Se intentó agregar la misma fecha de nuevo → toast real del
+   backend, "Ya existe un feriado en esa fecha" (`409 FERIADO_YA_EXISTE`), sin fila duplicada. Se
+   eliminó el feriado de prueba (`DELETE /sla/feriados/2026-11-20`) → desapareció de la tabla.
+4. Con `qa_felipe_tec_f4` (técnico) en `/configuracion`: aviso de solo lectura visible, tabla de SLA
+   en texto plano (sin `Input`/`Switch` editables, con `Media` ya mostrando `48` — el cambio del
+   paso 2 se ve igual para todos los roles), sin botones "Guardar"/"Descartar", y la sección
+   Feriados sin columna de eliminar ni formulario de alta — RBAC visual confirmado. La comprobación
+   directa por API de que `PUT`/`POST` devuelven `403` para `tecnico` no se pudo repetir en esta
+   sesión por `429 RATE_LIMITED` (5 intentos de login/15 min agotados por las múltiples pruebas de
+   esta fase, mismo límite ya documentado en fases anteriores) — el contrato admin-only está
+   confirmado por `docs/api.md` y por el ocultamiento real de los controles en la UI, así que no se
+   forzó.
+5. Notificación de derivación real: con el admin se derivó `OT-1042` a `qa_felipe_tec_f4`
+   (`POST /ots/:id/derivar`, motivo de prueba). Al loguearse como `qa_felipe_tec_f4` **la primera
+   vez** (login por API con `curl` justo después de la derivación) la campana mostró "Sin
+   notificaciones." aunque `GET /notificaciones` con su propio token sí traía la notificación sin
+   leer — se investigó y se encontró el bug de caché cruzado entre usuarios descrito arriba,
+   corregido en `AuthProvider.tsx`. Repetido el recorrido completo después del fix: la campana
+   mostró el badge "1" y el ítem "OT-1042 fue derivada a ti" correctamente.
+6. Clic en la notificación de derivación: la marcó leída (`POST /notificaciones/:id/leer`, punto
+   pasó de azul a gris, badge del popover) y abrió el detalle de OT-1042 directamente (`abrirOT`),
+   mostrando el `slaResolucionVenceEn` ya recalculado del paso 2.
+7. Segunda notificación (derivación de `OT-1043` al mismo usuario, esta vez con el `motivo` pasado
+   por un heredoc UTF-8 limpio en vez de `-d` directo, para descartar que el encoding mangled visto
+   antes fuera un bug de la app — se confirmó que era un artefacto de la consola, no de la UI: el
+   segundo texto se vio perfecto). Contador subió a "1" otra vez (la primera seguía leída). "Marcar
+   todas como leídas" (`POST /notificaciones/leer-todas`) → ambos ítems pasaron a gris, badge
+   desaparecido del todo.
+8. Resumen al iniciar sesión: se cerró sesión y se volvió a entrar como `qa_felipe_tec_f4` → el
+   diálogo apareció una sola vez, con el título usando la fecha real del día ("Resumen del día · mié
+   23 sept 2026", sin la fecha fija del mock) y los 4 números reales (`0` OT vencidas, `2` OT de
+   prioridad alta abiertas con chips clicables `OT-1041`/`OT-1043`, `0` pendientes por cotizar, `0`
+   tickets nuevos), más el texto "Panorama de todo el equipo, no solo lo tuyo." Clic en el chip
+   `OT-1041` cerró el diálogo y abrió el detalle de esa OT directamente.
+9. Notificación de tipo `sla_por_vencer`/`sla_vencida`: **no se generó ni se probó a propósito** —
+   depende del cron `evaluarSla` (cada 5 min) y de que una entidad real cruce el umbral, lo que no
+   es practicable de forzar de forma determinista dentro del tiempo de esta verificación sin tocar
+   el reloj del sistema o datos ya vencidos de fases previas; queda sin cobertura de extremo a
+   extremo en esta fase (el renderizado de esos dos tipos en la campana comparte el mismo código de
+   `titulo`/`cuerpo`/clic que `derivacion`, ya probado, así que el riesgo residual es bajo).
+10. Consola del navegador (`read_console_messages`, solo errores): ningún `TypeError` ni `Uncaught`
+    en ningún punto del recorrido. Los únicos `error` son HTTP no-2xx esperados: `401` de la
+    validación de sesión al cambiar de usuario, `409` del feriado duplicado (paso 3), y varios `403`
+    de `GET /usuarios` para `tecnico` (mismo límite admin-only ya documentado desde la Fase 1, no
+    una regresión de esta fase).
+
+Al terminar: `qa_felipe_tec_f4` quedó desactivado (`PATCH /usuarios/:id {activo:false}`, `200`). El
+admin de prueba `qa_felipe_admin_f4` **no** se pudo desactivar a sí mismo (`409 CONFLICT`, mismo
+bloqueo ya documentado desde la Fase 0); queda activo en `siga-tickets` con una contraseña que no
+quedó en ningún archivo del repo ni de logs. Backend y frontend quedaron **detenidos** al
+terminar — confirmado con `curl`/`Invoke-WebRequest` a `http://localhost:3002/health` y
+`http://localhost:8080/` (ambos sin respuesta) tras identificar y detener el proceso real del
+backend por su PID (`Get-NetTCPConnection -LocalPort 3002`), ya que en esta sesión `pkill` por
+patrón de comando no encontró el proceso de Windows correspondiente.

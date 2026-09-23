@@ -1,6 +1,7 @@
 // Reemplaza el usuarioActual fijo del mock (mock-data.ts) por el usuario real de la sesión.
 // Ver docs/frontend-diseno.md — decisiones de arquitectura, sección Auth.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/client";
 import { clearToken, getToken, setToken } from "./token";
 
@@ -37,6 +38,7 @@ const AuthContext = (globalRef.__authContext ??= createContext<AuthContextValue 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [cargando, setCargando] = useState(true);
+  const queryClient = useQueryClient();
 
   // Al montar: si hay un token guardado, se valida contra el backend y se trae el usuario real.
   // Si el token es inválido o venció, se limpia y se sigue como sesión no iniciada (sin crashear).
@@ -65,21 +67,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
-    // POST /auth/login ya devuelve { token, user } — no hace falta un GET /auth/me adicional.
-    const { data } = await apiClient.post<{ token: string; user: Usuario }>(
-      "/auth/login",
-      { username, password },
-      { auth: false },
-    );
-    setToken(data.token);
-    setUsuario(data.user);
-  }, []);
+  const login = useCallback(
+    async (username: string, password: string) => {
+      // POST /auth/login ya devuelve { token, user } — no hace falta un GET /auth/me adicional.
+      const { data } = await apiClient.post<{ token: string; user: Usuario }>(
+        "/auth/login",
+        { username, password },
+        { auth: false },
+      );
+      // Limpia cualquier dato cacheado de una sesión anterior en la misma pestaña (Fase 4: se
+      // detectó que, sin esto, el popover de notificaciones podía mostrar por un instante los
+      // datos cacheados del usuario que acaba de cerrar sesión — TanStack Query no sabe por sí
+      // solo que cambió el usuario autenticado, ya que las query keys no incluyen su id).
+      queryClient.clear();
+      setToken(data.token);
+      setUsuario(data.user);
+    },
+    [queryClient],
+  );
 
   const logout = useCallback(() => {
     clearToken();
     setUsuario(null);
-  }, []);
+    queryClient.clear();
+  }, [queryClient]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ usuario, estaAutenticado: usuario !== null, cargando, login, logout }),
