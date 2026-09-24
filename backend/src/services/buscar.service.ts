@@ -49,10 +49,12 @@ export async function buscarGlobal(q: string): Promise<BuscarDto> {
        ORDER BY numero DESC`,
       [like],
     ) as Promise<FilaOt[]>,
+    // Fase C: t.estado ya no es una columna string; se une estado_ticket para el nombre legible.
     AppDataSource.query(
-      `SELECT TOP ${LIMITE} id, numero, asunto, estado FROM ticket
-       WHERE numero LIKE @0 ESCAPE '\\' OR asunto LIKE @0 ESCAPE '\\'
-       ORDER BY numero DESC`,
+      `SELECT TOP ${LIMITE} t.id, t.numero, t.asunto, e.nombre AS estado FROM ticket t
+       JOIN estado_ticket e ON e.id = t.estado_id
+       WHERE t.numero LIKE @0 ESCAPE '\\' OR t.asunto LIKE @0 ESCAPE '\\'
+       ORDER BY t.numero DESC`,
       [like],
     ) as Promise<FilaTicket[]>,
     AppDataSource.query(

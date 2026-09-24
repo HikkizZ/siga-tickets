@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CategoriaOt, EstadoOt, OrigenOt, Prioridad } from "../entities/enums.js";
+import { CategoriaOt, EstadoOt, OrigenOt } from "../entities/enums.js";
 
 const uuid = (msg = "Id inválido") => z.string().uuid(msg);
 
@@ -54,7 +54,7 @@ export const crearOtReq = {
       clienteId: uuid("clienteId inválido").optional(),
       areaInterna: opcionalTexto(120).optional(),
       categoria: z.nativeEnum(CategoriaOt),
-      prioridad: z.nativeEnum(Prioridad),
+      prioridadId: uuid("prioridadId inválido"),
       origen: z.nativeEnum(OrigenOt),
       ubicacion: opcionalTexto(200).optional(),
       solicitanteNombre: opcionalTexto(120).optional(),
@@ -78,7 +78,7 @@ export const actualizarOtReq = {
       titulo: titulo.optional(),
       descripcion: descripcion.optional(),
       categoria: z.nativeEnum(CategoriaOt).optional(),
-      prioridad: z.nativeEnum(Prioridad).optional(),
+      prioridadId: uuid("prioridadId inválido").optional(),
       ubicacion: opcionalTexto(200).nullable().optional(),
       solicitanteNombre: opcionalTexto(120).nullable().optional(),
       solicitanteContacto: opcionalTexto(160).nullable().optional(),
@@ -183,7 +183,7 @@ const booleanoQuery = z.enum(["true", "false", "1", "0"]).transform((v) => v ===
 
 const filtrosOt = {
   estado: z.nativeEnum(EstadoOt).optional(),
-  prioridad: z.nativeEnum(Prioridad).optional(),
+  prioridadId: uuid("prioridadId inválido").optional(),
   categoria: z.nativeEnum(CategoriaOt).optional(),
   clienteId: uuid("clienteId inválido").optional(),
   responsableId: uuid("responsableId inválido").optional(),

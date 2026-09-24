@@ -35,7 +35,7 @@ describe("GET /buscar", () => {
     const t = await crearTicketApi(admin.auth, { asunto: "Impresora no responde" });
 
     const porNumero = await get(admin.auth, `/buscar?q=${encodeURIComponent(t.numero)}`);
-    expect(porNumero.body.data.tickets).toEqual([{ tipo: "ticket", id: t.id, numero: t.numero, asunto: "Impresora no responde", estado: "nuevo" }]);
+    expect(porNumero.body.data.tickets).toEqual([{ tipo: "ticket", id: t.id, numero: t.numero, asunto: "Impresora no responde", estado: "Nuevo" }]);
 
     const porAsunto = await get(admin.auth, `/buscar?q=${encodeURIComponent("impresora")}`);
     expect(porAsunto.body.data.tickets.map((x: { id: string }) => x.id)).toContain(t.id);

@@ -13,7 +13,7 @@ afterAll(() => AppDataSource.destroy());
 describe("GET /ots/:id — campo tickets (Fase 3)", () => {
   it("está vacío cuando no hay tickets vinculados", async () => {
     const e = await crearEscenarioTicket();
-    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(otBody(e.cliente.id));
+    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(await otBody(e.cliente.id));
 
     const res = await request(app).get(`${API}/ots/${ot.body.data.id}`).set("Authorization", e.admin.auth);
 
@@ -33,7 +33,7 @@ describe("GET /ots/:id — campo tickets (Fase 3)", () => {
     const res = await request(app).get(`${API}/ots/${otId}`).set("Authorization", e.admin.auth);
 
     expect(res.body.data.tickets).toHaveLength(2);
-    expect(res.body.data.tickets[0]).toMatchObject({ id: e.ticketId, numero: e.numero, esOrigen: true, canal: "telefono" });
+    expect(res.body.data.tickets[0]).toMatchObject({ id: e.ticketId, numero: e.numero, esOrigen: true, canal: { nombre: "Teléfono" } });
     expect(res.body.data.tickets[1]).toMatchObject({ id: otroTicket.id, asunto: "Ticket vinculado manual", esOrigen: false });
   });
 });

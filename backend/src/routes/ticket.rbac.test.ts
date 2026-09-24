@@ -2,7 +2,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerEstadoTicketPorNombre, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API } from "../test/otHelpers.js";
 import { crearEscenarioTicket, crearTicketApi, ticketBody, type EscenarioTicket } from "../test/ticketHelpers.js";
 import type { Sesion } from "../test/otHelpers.js";
@@ -37,7 +37,7 @@ const sesionDe = (e: EscenarioTicket, a: Actor): Sesion | null => (a === "anon" 
 
 const CASOS: Caso[] = [
   { nombre: "GET /tickets", armar: () => ({ metodo: "get", url: "/tickets" }), ok: TODOS_AUTENTICADOS, exito: 200 },
-  { nombre: "POST /tickets", armar: () => ({ metodo: "post", url: "/tickets", body: ticketBody() }), ok: CREADORES, exito: 201 },
+  { nombre: "POST /tickets", armar: async () => ({ metodo: "post", url: "/tickets", body: await ticketBody() }), ok: CREADORES, exito: 201 },
   { nombre: "GET /tickets/:id", armar: (e) => ({ metodo: "get", url: `/tickets/${e.ticketId}` }), ok: TODOS_AUTENTICADOS, exito: 200 },
   {
     nombre: "PATCH /tickets/:id",
@@ -47,7 +47,10 @@ const CASOS: Caso[] = [
   },
   {
     nombre: "POST /tickets/:id/estado",
-    armar: (e) => ({ metodo: "post", url: `/tickets/${e.ticketId}/estado`, body: { estado: "resuelto" } }),
+    armar: async (e) => {
+      const resuelto = await obtenerEstadoTicketPorNombre("Resuelto");
+      return { metodo: "post", url: `/tickets/${e.ticketId}/estado`, body: { estadoId: resuelto.id } };
+    },
     ok: RESPONSABLES,
     exito: 200,
   },
@@ -83,10 +86,11 @@ const CASOS: Caso[] = [
   {
     nombre: "POST /tickets/:id/ots",
     armar: async (e) => {
+      const media = await obtenerPrioridadPorNombre("Media");
       const ot = await request(app)
         .post(`${API}/ots`)
         .set("Authorization", e.admin.auth)
-        .send({ titulo: "OT", descripcion: "d", clienteId: e.cliente.id, categoria: "soporte", prioridad: "media", origen: "telefono" });
+        .send({ titulo: "OT", descripcion: "d", clienteId: e.cliente.id, categoria: "soporte", prioridadId: media.id, origen: "telefono" });
       return { metodo: "post", url: `/tickets/${e.ticketId}/ots`, body: { otId: ot.body.data.id } };
     },
     ok: GESTORES,
@@ -95,10 +99,11 @@ const CASOS: Caso[] = [
   {
     nombre: "DELETE /tickets/:id/ots/:otId",
     armar: async (e) => {
+      const media = await obtenerPrioridadPorNombre("Media");
       const ot = await request(app)
         .post(`${API}/ots`)
         .set("Authorization", e.admin.auth)
-        .send({ titulo: "OT", descripcion: "d", clienteId: e.cliente.id, categoria: "soporte", prioridad: "media", origen: "telefono" });
+        .send({ titulo: "OT", descripcion: "d", clienteId: e.cliente.id, categoria: "soporte", prioridadId: media.id, origen: "telefono" });
       await request(app).post(`${API}/tickets/${e.ticketId}/ots`).set("Authorization", e.admin.auth).send({ otId: ot.body.data.id });
       return { metodo: "delete", url: `/tickets/${e.ticketId}/ots/${ot.body.data.id}` };
     },

@@ -1,5 +1,5 @@
+import { EstadoTicket } from "../entities/EstadoTicket.js";
 import { Ticket } from "../entities/Ticket.js";
-import { EstadoTicket } from "../entities/enums.js";
 import { AppError } from "../errors/AppError.js";
 import type { ContextoTicket } from "../policies/ticket.policy.js";
 import { registrarEventoTicket } from "./evento.service.js";
@@ -27,20 +27,29 @@ export function contextoTicket(ticket: Ticket, actor: UsuarioActor): ContextoTic
 // "Reabrir ticket + cerrar pausa de SLA cuando responde el cliente" (Fase 5, punto 7 del encargo;
 // reutilizada tal cual por la ingesta de correo de la Fase 6, ver
 // services/correoIngerido.service.ts). Factorizada desde services/portal.mensaje.service.ts, que
-// tenía esta misma lógica inline (única llamadora hasta ahora). Si el ticket estaba
-// esperando_cliente o resuelto: cierra la pausa de SLA activa (solo si venía de esperando_cliente)
-// y pasa a abierto, con su propio evento estado_cambiado. Si estaba cerrado (o cualquier otro
-// estado), no hace nada: "cerrado" no se reabre automáticamente (decisión del staff). Muta
-// `ticket` en memoria y hace su propio m.save(); el llamador no debe volver a guardarlo.
+// tenía esta misma lógica inline (única llamadora hasta ahora).
+//
+// Fase C: el chequeo por valor literal ("esperando_cliente" o "resuelto") se reemplaza por los
+// flags de la fila estado_ticket actual del ticket: reabre si el estado actual tiene
+// esPausaSla=true (equivalente a "esperando_cliente") O marcaResueltoEn=true (equivalente al
+// estado real "resuelto", no cualquier terminal — "cerrado" tiene esTerminal pero no
+// marcaResueltoEn=true en la semilla, así que queda fuera, igual que antes). Si tenía esPausaSla,
+// cierra la pausa igual que antes. El destino siempre es la fila con esDestinoReapertura=true. Si
+// estaba en cualquier otro estado (incluido el que marca cerrado), no hace nada. Muta `ticket` en
+// memoria y hace su propio m.save(); el llamador no debe volver a guardarlo.
 export async function reabrirTicketSiCorresponde(manager: ManagerTransaccional, ticket: Ticket, actorId: string): Promise<void> {
-  if (ticket.estado !== EstadoTicket.ESPERANDO_CLIENTE && ticket.estado !== EstadoTicket.RESUELTO) return;
+  const estadoActual = await manager.findOneByOrFail(EstadoTicket, { id: ticket.estadoId });
+  if (!estadoActual.esPausaSla && !estadoActual.marcaResueltoEn) return;
 
-  const anterior = ticket.estado;
+  const destino = await manager.findOneBy(EstadoTicket, { esDestinoReapertura: true });
+  if (!destino) throw new Error("No hay ningún estado_ticket marcado como esDestinoReapertura=true");
+
   const ahora = await ahoraDb(manager);
-  if (anterior === EstadoTicket.ESPERANDO_CLIENTE) {
+  if (estadoActual.esPausaSla) {
     await cerrarPausaYCorrerVencimientos(manager, ticket, ahora);
   }
-  ticket.estado = EstadoTicket.ABIERTO;
+  ticket.estadoId = destino.id;
   await manager.save(Ticket, ticket);
-  await registrarEventoTicket(manager, ticket.id, actorId, { tipo: "estado_cambiado", de: anterior, a: EstadoTicket.ABIERTO });
+  // Payload legible por nombre (no el uuid), mismo criterio que antes con el valor del enum.
+  await registrarEventoTicket(manager, ticket.id, actorId, { tipo: "estado_cambiado", de: estadoActual.nombre, a: destino.nombre });
 }

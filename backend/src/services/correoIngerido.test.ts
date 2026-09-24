@@ -4,7 +4,7 @@ import { AppDataSource } from "../config/dataSource.js";
 import { env } from "../config/env.js";
 import { Rol } from "../entities/enums.js";
 import { adjuntoFake, correoEntranteFake } from "../test/correoHelpers.js";
-import { conectarBD, crearUsuarioSistemaTest, limpiarBD } from "../test/helpers.js";
+import { conectarBD, crearUsuarioSistemaTest, limpiarBD, obtenerEstadoTicketPorNombre } from "../test/helpers.js";
 import { crearSesionNombrada } from "../test/otHelpers.js";
 import { crearEscenarioTicket, crearTicketApi } from "../test/ticketHelpers.js";
 import { procesarMensajeEntrante, reprocesarCorreoIngerido } from "./correoIngerido.service.js";
@@ -171,11 +171,12 @@ describe("procesarMensajeEntrante", () => {
     const fila = await filaCorreoIngerido(correo.messageId);
     expect(fila?.ticket_id).not.toBeNull();
     const [t] = await AppDataSource.query(
-      `SELECT numero, canal, recepcionado_por_id, sla_resolucion_vence_en, solicitante_email FROM ticket WHERE id = @0`,
+      `SELECT t.numero, ct.nombre AS canal, t.recepcionado_por_id, t.sla_resolucion_vence_en, t.solicitante_email
+       FROM ticket t JOIN canal_ticket ct ON ct.id = t.canal_id WHERE t.id = @0`,
       [fila!.ticket_id],
     );
     expect(t.numero).toMatch(/^TK-\d{4}$/);
-    expect(t.canal).toBe("correo");
+    expect(t.canal).toBe("Correo");
     expect(t.sla_resolucion_vence_en).not.toBeNull();
     expect(t.solicitante_email).toBe(correo.de.email);
     const sistema = await AppDataSource.query(`SELECT id FROM usuario WHERE username = 'sistema'`);
@@ -186,32 +187,38 @@ describe("procesarMensajeEntrante", () => {
 
   it("mensaje en ticket existente reabre esperando_cliente/resuelto y cierra la pausa, pero no reabre cerrado", async () => {
     const e = await crearEscenarioTicket(); // ticketId, numero, solicitanteEmail = "juan.perez@test.local"
-    const cambiarEstado = (estado: string) =>
-      AppDataSource.query(`UPDATE ticket SET estado = @0 WHERE id = @1`, [estado, e.ticketId]);
+    const cambiarEstado = async (nombreEstado: string) => {
+      const estado = await obtenerEstadoTicketPorNombre(nombreEstado);
+      await AppDataSource.query(`UPDATE ticket SET estado_id = @0 WHERE id = @1`, [estado.id, e.ticketId]);
+    };
+    const leerEstado = async () => {
+      const [fila] = await AppDataSource.query(
+        `SELECT est.nombre AS estado FROM ticket t JOIN estado_ticket est ON est.id = t.estado_id WHERE t.id = @0`,
+        [e.ticketId],
+      );
+      return fila.estado as string;
+    };
 
     // 1) esperando_cliente -> abierto, cierra la pausa
     await AppDataSource.query(`INSERT INTO sla_pausa (entidad_tipo, entidad_id, desde) VALUES ('ticket', @0, SYSDATETIMEOFFSET())`, [e.ticketId]);
-    await cambiarEstado("esperando_cliente");
+    await cambiarEstado("Esperando cliente");
     const correo1 = correoEntranteFake({ asunto: `${e.numero} sigue el problema`, de: { nombre: null, email: "juan.perez@test.local" } });
     await procesarMensajeEntrante(correo1, ORIGEN);
-    const [t1] = await AppDataSource.query(`SELECT estado FROM ticket WHERE id = @0`, [e.ticketId]);
-    expect(t1.estado).toBe("abierto");
+    expect(await leerEstado()).toBe("Abierto");
     const [pausa] = await AppDataSource.query(`SELECT hasta FROM sla_pausa WHERE entidad_tipo = 'ticket' AND entidad_id = @0`, [e.ticketId]);
     expect(pausa.hasta).not.toBeNull();
 
     // 2) resuelto -> abierto
-    await cambiarEstado("resuelto");
+    await cambiarEstado("Resuelto");
     const correo2 = correoEntranteFake({ asunto: `${e.numero} de nuevo`, de: { nombre: null, email: "juan.perez@test.local" } });
     await procesarMensajeEntrante(correo2, ORIGEN);
-    const [t2] = await AppDataSource.query(`SELECT estado FROM ticket WHERE id = @0`, [e.ticketId]);
-    expect(t2.estado).toBe("abierto");
+    expect(await leerEstado()).toBe("Abierto");
 
     // 3) cerrado -> NO se reabre
-    await cambiarEstado("cerrado");
+    await cambiarEstado("Cerrado");
     const correo3 = correoEntranteFake({ asunto: `${e.numero} otra vez`, de: { nombre: null, email: "juan.perez@test.local" } });
     await procesarMensajeEntrante(correo3, ORIGEN);
-    const [t3] = await AppDataSource.query(`SELECT estado FROM ticket WHERE id = @0`, [e.ticketId]);
-    expect(t3.estado).toBe("cerrado");
+    expect(await leerEstado()).toBe("Cerrado");
   });
 
   it("adjunto fuera de la lista blanca se descarta sin tumbar el mensaje", async () => {

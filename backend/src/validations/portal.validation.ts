@@ -1,11 +1,13 @@
 import { z } from "zod";
-import { Prioridad } from "../entities/enums.js";
 
 const uuid = (msg = "Id inválido") => z.string().uuid(msg);
 const captchaToken = z.string().min(1, "captchaToken es obligatorio");
 
 // Multipart: los campos de texto llegan como string en req.body tras multer. `.strict()` sigue
 // aplicando (multer solo copia los campos declarados en el formulario a req.body).
+//
+// Fase C: prioridad ya no es un enum fijo con default de Zod (`Prioridad.MEDIA`); ahora es opcional
+// y el servicio resuelve la fila "Media" cuando no viene (ver portal.service.ts::resolverPrioridadPortal).
 export const crearTicketPublicoReq = {
   body: z
     .object({
@@ -14,7 +16,7 @@ export const crearTicketPublicoReq = {
       empresa: z.string().trim().min(1).max(160).optional(),
       asunto: z.string().trim().min(1, "asunto es obligatorio").max(200),
       descripcion: z.string().trim().min(1, "descripcion es obligatoria").max(20000),
-      prioridad: z.nativeEnum(Prioridad).default(Prioridad.MEDIA),
+      prioridadId: uuid("prioridadId inválido").optional(),
       captchaToken,
     })
     .strict(),

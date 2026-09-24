@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { Rol } from "../entities/enums.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerCanalTicketPorNombre } from "../test/helpers.js";
 import { API, crearClienteTest, crearSesionNombrada, otBody } from "../test/otHelpers.js";
 import { crearEscenarioTicket, crearTicketApi, tramosTicket } from "../test/ticketHelpers.js";
 
@@ -27,7 +27,7 @@ describe("POST /tickets/:id/convertir-a-ot", () => {
     expect(ot.recepcionadoPor.id).toBe(e.admin.usuario.id); // quien creó (recibió) el ticket, no e.gestion
     expect(ot.recepcionadoPor.id).not.toBe(e.gestion.usuario.id);
     expect(ot.cliente.id).toBe(e.cliente.id);
-    expect(ot.prioridad).toBe("media"); // heredada del ticket (ticketBody default)
+    expect(ot.prioridad.nombre).toBe("Media"); // heredada del ticket (ticketBody default)
 
     const t = await ticket(e.gestion.auth, e.ticketId);
     expect(t.ots).toHaveLength(1);
@@ -40,16 +40,17 @@ describe("POST /tickets/:id/convertir-a-ot", () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_origen");
     const gestion = await crearSesionNombrada(Rol.GESTION, "gestion_origen");
     const cliente = await crearClienteTest("Cliente Origen Test");
-    const mapa: Record<string, string> = { telefono: "telefono", presencial: "presencial", interno: "interna" };
+    const mapa: Record<string, string> = { Teléfono: "telefono", Presencial: "presencial", Interno: "interna" };
 
-    for (const [canal, origenEsperado] of Object.entries(mapa)) {
-      const t = await crearTicketApi(admin.auth, { canal });
+    for (const [nombreCanal, origenEsperado] of Object.entries(mapa)) {
+      const canal = await obtenerCanalTicketPorNombre(nombreCanal);
+      const t = await crearTicketApi(admin.auth, { canalId: canal.id });
       const body =
-        canal === "interno"
+        nombreCanal === "Interno"
           ? { categoria: "soporte", esInterna: true, areaInterna: "TI" }
           : { categoria: "soporte", clienteId: cliente.id };
       const res = await convertir(gestion.auth, t.id, body);
-      expect(res.status, canal).toBe(201);
+      expect(res.status, nombreCanal).toBe(201);
       expect(res.body.data.origen).toBe(origenEsperado);
     }
   });
@@ -160,7 +161,7 @@ describe("POST /tickets/:id/convertir-a-ot", () => {
 describe("POST /tickets/:id/ots y DELETE /tickets/:id/ots/:otId (vincular OT existente)", () => {
   it("vincula una OT existente con es_origen=false y evento en el ticket", async () => {
     const e = await crearEscenarioTicket();
-    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(otBody(e.cliente.id));
+    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(await otBody(e.cliente.id));
 
     const res = await request(app).post(`${API}/tickets/${e.ticketId}/ots`).set("Authorization", e.gestion.auth).send({ otId: ot.body.data.id });
 
@@ -174,7 +175,7 @@ describe("POST /tickets/:id/ots y DELETE /tickets/:id/ots/:otId (vincular OT exi
 
   it("vincular la misma OT dos veces: 409 (PK ticket_id+ot_id)", async () => {
     const e = await crearEscenarioTicket();
-    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(otBody(e.cliente.id));
+    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(await otBody(e.cliente.id));
     await request(app).post(`${API}/tickets/${e.ticketId}/ots`).set("Authorization", e.gestion.auth).send({ otId: ot.body.data.id });
 
     const res = await request(app).post(`${API}/tickets/${e.ticketId}/ots`).set("Authorization", e.gestion.auth).send({ otId: ot.body.data.id });
@@ -213,7 +214,7 @@ describe("POST /tickets/:id/ots y DELETE /tickets/:id/ots/:otId (vincular OT exi
 
   it("desvincular un vínculo inexistente: 404", async () => {
     const e = await crearEscenarioTicket();
-    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(otBody(e.cliente.id));
+    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(await otBody(e.cliente.id));
 
     const res = await request(app).delete(`${API}/tickets/${e.ticketId}/ots/${ot.body.data.id}`).set("Authorization", e.gestion.auth);
 
@@ -222,7 +223,7 @@ describe("POST /tickets/:id/ots y DELETE /tickets/:id/ots/:otId (vincular OT exi
 
   it("solo gestion o admin vinculan/desvinculan", async () => {
     const e = await crearEscenarioTicket();
-    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(otBody(e.cliente.id));
+    const ot = await request(app).post(`${API}/ots`).set("Authorization", e.admin.auth).send(await otBody(e.cliente.id));
 
     const res = await request(app).post(`${API}/tickets/${e.ticketId}/ots`).set("Authorization", e.resp.auth).send({ otId: ot.body.data.id });
 

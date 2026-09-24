@@ -8,27 +8,10 @@ export enum Rol {
   LECTURA = "lectura",
 }
 
-export enum Prioridad {
-  ALTA = "alta",
-  MEDIA = "media",
-  BAJA = "baja",
-}
-
-export enum CanalTicket {
-  PORTAL = "portal",
-  CORREO = "correo",
-  TELEFONO = "telefono",
-  PRESENCIAL = "presencial",
-  INTERNO = "interno",
-}
-
-export enum EstadoTicket {
-  NUEVO = "nuevo",
-  ABIERTO = "abierto",
-  ESPERANDO_CLIENTE = "esperando_cliente",
-  RESUELTO = "resuelto",
-  CERRADO = "cerrado",
-}
+// Prioridad, CanalTicket y EstadoTicket dejaron de ser enums fijos en la Fase C: ahora son
+// catálogos configurables por el admin (entities/Prioridad.ts, entities/CanalTicket.ts,
+// entities/EstadoTicket.ts respectivamente), con la misma tabla prioridad compartida por Ticket y
+// Ot igual que antes compartían el enum.
 
 export enum SlaEstado {
   EN_PLAZO = "en_plazo",

@@ -9,13 +9,15 @@ import { Evento } from "../entities/Evento.js";
 import { HoraTrabajada } from "../entities/HoraTrabajada.js";
 import { Ot } from "../entities/Ot.js";
 import { OtColaborador } from "../entities/OtColaborador.js";
-import { EntidadAdjunto, EntidadAsignable, EntidadEvento, EstadoOt, type Prioridad } from "../entities/enums.js";
+import { Prioridad } from "../entities/Prioridad.js";
+import { EntidadAdjunto, EntidadAsignable, EntidadEvento, EstadoOt } from "../entities/enums.js";
 import { AppError } from "../errors/AppError.js";
 import { exigir, puedeCambiarEstado, puedeEditarOt } from "../policies/ot.policy.js";
 import type { FiltrosOt } from "../validations/ot.validation.js";
 import { registrarEventoOt } from "./evento.service.js";
 import { enTransaccion, siguienteFolio, type ManagerTransaccional } from "./folio.service.js";
 import { ahoraDb, bloquearOt, contextoOt, otNoEncontrada, usuarioAsignable, type UsuarioActor, type UsuarioRef } from "./ot.common.js";
+import { exigirPrioridadActiva } from "./prioridad.service.js";
 import { calcularVencimientoOt } from "./sla.calculo.service.js";
 import { toAdjuntoDto } from "./adjunto.dto.js";
 
@@ -44,7 +46,7 @@ function construirFiltros(f: FiltrosOt, usuarioId: string): { where: string; par
   const w: string[] = [];
 
   if (f.estado) w.push(`o.estado = ${p(f.estado)}`);
-  if (f.prioridad) w.push(`o.prioridad = ${p(f.prioridad)}`);
+  if (f.prioridadId) w.push(`o.prioridad_id = ${p(f.prioridadId)}`);
   if (f.categoria) w.push(`o.categoria = ${p(f.categoria)}`);
   if (f.clienteId) w.push(`o.cliente_id = ${p(f.clienteId)}`);
   if (f.responsableId) w.push(`o.responsable_actual_id = ${p(f.responsableId)}`);
@@ -65,12 +67,14 @@ function construirFiltros(f: FiltrosOt, usuarioId: string): { where: string; par
 }
 
 const SELECT_BASE = `
-  SELECT o.id, o.numero, o.titulo, o.es_interna, o.area_interna, o.categoria, o.prioridad, o.origen, o.estado,
+  SELECT o.id, o.numero, o.titulo, o.es_interna, o.area_interna, o.categoria, o.origen, o.estado,
+         p.id AS prioridad_id, p.nombre AS prioridad_nombre,
          o.solicitante_nombre, o.fecha_ingreso, o.sla_estado, o.creado_en, o.actualizado_en,
          CONVERT(varchar(10), o.fecha_estimada_termino, 23) AS fecha_estimada_termino,
          c.id AS cliente_id, c.nombre AS cliente_nombre,
          r.id AS responsable_id, r.nombre AS responsable_nombre
   FROM ot o
+  JOIN prioridad p ON p.id = o.prioridad_id
   LEFT JOIN cliente c ON c.id = o.cliente_id
   LEFT JOIN usuario r ON r.id = o.responsable_actual_id`;
 
@@ -81,7 +85,8 @@ interface FilaOt {
   es_interna: boolean;
   area_interna: string | null;
   categoria: string;
-  prioridad: string;
+  prioridad_id: string;
+  prioridad_nombre: string;
   origen: string;
   estado: string;
   solicitante_nombre: string | null;
@@ -100,18 +105,20 @@ const baseDto = (r: FilaOt) => ({
   titulo: r.titulo,
   cliente: ref(r.cliente_id, r.cliente_nombre),
   areaInterna: r.area_interna,
-  prioridad: r.prioridad,
+  prioridad: { id: r.prioridad_id.toLowerCase(), nombre: r.prioridad_nombre },
   responsable: ref(r.responsable_id, r.responsable_nombre),
   fechaEstimadaTermino: r.fecha_estimada_termino,
   slaEstado: r.sla_estado,
 });
 
 // Lista blanca de orden: el nombre llega del cliente, jamás se interpola tal cual.
+// Fase C: prioridad ya no es un enum fijo con un orden literal (CASE ... WHEN); usa la columna
+// `orden` del catálogo (ver entities/Prioridad.ts), disponible porque SELECT_BASE ya la une.
 const ORDEN_SQL: Record<string, string> = {
   numero: "o.numero",
   titulo: "o.titulo",
   estado: "CASE o.estado WHEN 'ingresado' THEN 1 WHEN 'en_cotizacion' THEN 2 WHEN 'aprobado' THEN 3 WHEN 'en_ejecucion' THEN 4 WHEN 'terminado' THEN 5 ELSE 6 END",
-  prioridad: "CASE o.prioridad WHEN 'alta' THEN 1 WHEN 'media' THEN 2 ELSE 3 END",
+  prioridad: "p.orden",
   fechaIngreso: "o.fecha_ingreso",
   fechaEstimadaTermino: "o.fecha_estimada_termino",
   creadoEn: "o.creado_en",
@@ -238,7 +245,7 @@ interface FilaCotizacionOt {
 export async function obtenerDetalleOt(id: string) {
   const ot = await AppDataSource.getRepository(Ot).findOne({
     where: { id },
-    relations: { cliente: true, recepcionadoPor: true, responsableActual: true },
+    relations: { cliente: true, recepcionadoPor: true, responsableActual: true, prioridad: true },
   });
   if (!ot) throw otNoEncontrada();
 
@@ -270,12 +277,29 @@ export async function obtenerDetalleOt(id: string) {
       [id],
     ) as Promise<FilaCotizacionOt[]>,
     // Fase 3: tickets vinculados vía ticket_ot, el de origen primero (antes este campo era []).
+    // Fase C: t.estado/t.canal ya no son columnas string; se unen sus catálogos para exponer
+    // {id, nombre}, mismo criterio que ticket.service.ts.
     AppDataSource.query(
-      `SELECT t.id, t.numero, t.asunto, t.estado, t.canal, tv.es_origen
-       FROM ticket_ot tv JOIN ticket t ON t.id = tv.ticket_id
+      `SELECT t.id, t.numero, t.asunto, e.id AS estado_id, e.nombre AS estado_nombre,
+              ct.id AS canal_id, ct.nombre AS canal_nombre, tv.es_origen
+       FROM ticket_ot tv
+       JOIN ticket t ON t.id = tv.ticket_id
+       JOIN estado_ticket e ON e.id = t.estado_id
+       JOIN canal_ticket ct ON ct.id = t.canal_id
        WHERE tv.ot_id = @0 ORDER BY tv.es_origen DESC, tv.creado_en ASC`,
       [id],
-    ) as Promise<Array<{ id: string; numero: string; asunto: string; estado: string; canal: string; es_origen: boolean }>>,
+    ) as Promise<
+      Array<{
+        id: string;
+        numero: string;
+        asunto: string;
+        estado_id: string;
+        estado_nombre: string;
+        canal_id: string;
+        canal_nombre: string;
+        es_origen: boolean;
+      }>
+    >,
   ]);
 
   const ahora = Date.now();
@@ -285,7 +309,9 @@ export async function obtenerDetalleOt(id: string) {
     titulo: ot.titulo,
     descripcion: ot.descripcion,
     estado: ot.estado,
-    prioridad: ot.prioridad,
+    // Fase C: prioridad era un valor de enum; ahora es un catálogo, expuesto igual que
+    // cliente/responsable ({id, nombre}) en vez de un string plano.
+    prioridad: { id: ot.prioridad.id, nombre: ot.prioridad.nombre },
     categoria: ot.categoria,
     origen: ot.origen,
     esInterna: ot.esInterna,
@@ -339,8 +365,8 @@ export async function obtenerDetalleOt(id: string) {
       id: t.id.toLowerCase(),
       numero: t.numero,
       asunto: t.asunto,
-      estado: t.estado,
-      canal: t.canal,
+      estado: { id: t.estado_id.toLowerCase(), nombre: t.estado_nombre },
+      canal: { id: t.canal_id.toLowerCase(), nombre: t.canal_nombre },
       esOrigen: !!t.es_origen,
     })),
   };
@@ -355,7 +381,7 @@ export interface CrearOtInput {
   clienteId?: string | undefined;
   areaInterna?: string | undefined;
   categoria: Ot["categoria"];
-  prioridad: Prioridad;
+  prioridadId: string;
   origen: Ot["origen"];
   ubicacion?: string | undefined;
   solicitanteNombre?: string | undefined;
@@ -374,6 +400,7 @@ export async function crearOt(actor: UsuarioActor, input: CrearOtInput) {
   const otId = randomUUID();
   await enTransaccion(AppDataSource, async (m) => {
     if (!input.esInterna) await exigirClienteActivo(m, input.clienteId!);
+    await exigirPrioridadActiva(m, input.prioridadId);
 
     const responsableId = input.responsableId ?? actor.id;
     await usuarioAsignable(m, responsableId, "RESPONSABLE_INVALIDO", "El responsable");
@@ -389,7 +416,7 @@ export async function crearOt(actor: UsuarioActor, input: CrearOtInput) {
     // necesita el valor antes del INSERT, no después (ver ticket.conversion.service.ts, mismo
     // patrón). Sigue siendo la hora del reloj de la BD (ahoraDb usa SYSDATETIMEOFFSET()).
     const fechaIngreso = await ahoraDb(m);
-    const slaResolucionVenceEn = await calcularVencimientoOt(m, input.prioridad, fechaIngreso);
+    const slaResolucionVenceEn = await calcularVencimientoOt(m, input.prioridadId, fechaIngreso);
     const ot = await m.save(
       Ot,
       m.create(Ot, {
@@ -401,7 +428,7 @@ export async function crearOt(actor: UsuarioActor, input: CrearOtInput) {
         clienteId: input.esInterna ? null : input.clienteId!,
         areaInterna: input.esInterna ? input.areaInterna! : null,
         categoria: input.categoria,
-        prioridad: input.prioridad,
+        prioridadId: input.prioridadId,
         origen: input.origen,
         ubicacion: input.ubicacion ?? null,
         solicitanteNombre: input.solicitanteNombre ?? null,
@@ -439,7 +466,7 @@ export interface ActualizarOtInput {
   titulo?: string | undefined;
   descripcion?: string | undefined;
   categoria?: Ot["categoria"] | undefined;
-  prioridad?: Prioridad | undefined;
+  prioridadId?: string | undefined;
   ubicacion?: string | null | undefined;
   solicitanteNombre?: string | null | undefined;
   solicitanteContacto?: string | null | undefined;
@@ -478,19 +505,26 @@ export async function actualizarOt(actor: UsuarioActor, id: string, cambios: Act
     aplicar("clienteId", cambios.clienteId);
     aplicar("areaInterna", cambios.areaInterna);
 
-    let prioridadAnterior: Prioridad | null = null;
-    if (cambios.prioridad !== undefined && cambios.prioridad !== ot.prioridad) {
-      prioridadAnterior = ot.prioridad;
-      ot.prioridad = cambios.prioridad;
+    let prioridadAnteriorNombre: string | null = null;
+    let prioridadNuevaNombre: string | null = null;
+    if (cambios.prioridadId !== undefined && cambios.prioridadId !== ot.prioridadId) {
+      const [anterior, nueva] = await Promise.all([
+        m.findOneByOrFail(Prioridad, { id: ot.prioridadId }),
+        exigirPrioridadActiva(m, cambios.prioridadId),
+      ]);
+      prioridadAnteriorNombre = anterior.nombre;
+      prioridadNuevaNombre = nueva.nombre;
+      ot.prioridadId = cambios.prioridadId;
       // Recalcula desde la fecha_ingreso ORIGINAL (no desde ahora), con la nueva prioridad.
-      ot.slaResolucionVenceEn = await calcularVencimientoOt(m, ot.prioridad, ot.fechaIngreso);
+      ot.slaResolucionVenceEn = await calcularVencimientoOt(m, ot.prioridadId, ot.fechaIngreso);
     }
 
-    if (editados.length === 0 && prioridadAnterior === null) return; // nada cambió: sin UPDATE ni evento
+    if (editados.length === 0 && prioridadAnteriorNombre === null) return; // nada cambió: sin UPDATE ni evento
     await m.save(Ot, ot);
 
-    if (prioridadAnterior !== null) {
-      await registrarEventoOt(m, id, actor.id, { tipo: "prioridad_cambiada", de: prioridadAnterior, a: ot.prioridad });
+    if (prioridadAnteriorNombre !== null) {
+      // Payload legible por nombre (no el uuid), mismo criterio que ticket.service.ts::actualizarTicket.
+      await registrarEventoOt(m, id, actor.id, { tipo: "prioridad_cambiada", de: prioridadAnteriorNombre, a: prioridadNuevaNombre! });
     }
     if (editados.length > 0) await registrarEventoOt(m, id, actor.id, { tipo: "ot_editada", campos: editados });
   });

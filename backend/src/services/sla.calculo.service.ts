@@ -1,16 +1,20 @@
 import { DateTime } from "luxon";
-import { SlaConfig } from "../entities/SlaConfig.js";
-import type { Prioridad } from "../entities/enums.js";
+import { Prioridad } from "../entities/Prioridad.js";
 import { horasHabilesEntre, sumarHorasHabiles, ZONA_HORARIA_SLA, type FilaCalendario } from "../sla/horasHabiles.js";
 import type { ManagerTransaccional } from "./folio.service.js";
 
-// Carga y cálculo de vencimientos de SLA (Fase 4). Todo lo que toca la BD (calendario_laboral,
-// feriado, sla_config) vive aquí; horasHabiles.ts se mantiene puro. Se usa desde:
+// Carga y cálculo de vencimientos de SLA (Fase 4; consolidado en la Fase C). Todo lo que toca la
+// BD (calendario_laboral, feriado, prioridad + su plan_sla) vive aquí; horasHabiles.ts se mantiene
+// puro. Se usa desde:
 //   - ot.service.ts / ticket.service.ts (crear, cambiar prioridad)
 //   - ticket.conversion.service.ts (la OT nacida de una conversión tiene su propio reloj)
-//   - sla.config.service.ts (recálculo en lote al editar sla_config)
+//   - slaPlan.service.ts (recálculo en lote al editar un plan SLA o desvincular uno al borrarlo)
 //   - sla.pausa.service.ts (correr el vencimiento al cerrar una pausa)
 //   - jobs/slaJob.ts (horas hábiles restantes hasta el vencimiento)
+//
+// Fase C: sla_config (3 filas fijas por prioridad) se retira. El SLA real ahora se calcula desde
+// Prioridad.planSla (Fase B2, catálogo con nombre propio, antes sin conexión real). Una prioridad
+// sin plan asignado (planSlaId NULL) no tiene SLA: los vencimientos quedan `null`, no se lanza error.
 
 export interface CalendarioYFeriados {
   calendario: FilaCalendario[];
@@ -35,69 +39,89 @@ function aDateTime(d: Date): DateTime {
   return DateTime.fromJSDate(d, { zone: "utc" });
 }
 
-export async function obtenerSlaConfigDe(manager: ManagerTransaccional, prioridad: Prioridad): Promise<SlaConfig> {
-  const fila = await manager.findOne(SlaConfig, { where: { prioridad } });
-  // No debería pasar: la migración siembra las 3 filas (alta/media/baja) y prioridad es un enum
-  // cerrado validado por Zod antes de llegar aquí.
-  if (!fila) throw new Error(`sla_config no tiene fila para la prioridad ${prioridad}`);
+// Fila mínima necesaria para calcular vencimientos: la prioridad con su plan (o null si no tiene).
+interface PrioridadConPlan {
+  planSla: {
+    horasResolucion: number;
+    horasPrimeraRespuesta: number;
+    usarHorasHabiles: boolean;
+  } | null;
+}
+
+async function obtenerPrioridadConPlan(manager: ManagerTransaccional, prioridadId: string): Promise<PrioridadConPlan> {
+  const fila = await manager.findOne(Prioridad, { where: { id: prioridadId }, relations: { planSla: true } });
+  // No debería pasar: prioridadId ya se valida (exigirPrioridadActiva/existencia) antes de llegar
+  // aquí en todos los call sites.
+  if (!fila) throw new Error(`prioridad no encontrada: ${prioridadId}`);
   return fila;
 }
 
 // horasResolucion/horasPrimeraRespuesta ya están expresadas EN horas hábiles cuando
 // usar_horas_habiles=true (el caso normal); si algún día se apaga, se cuentan como horas de reloj
-// corridas desde fechaIngreso (campo existente en sla_config, editable por PUT /sla/config, así
-// que se honra aunque el encargo no lo pruebe explícitamente).
-function calcularVencimiento(fechaIngreso: Date, horas: number, cfg: SlaConfig, cal: CalendarioYFeriados): Date {
-  if (!cfg.usarHorasHabiles) {
+// corridas desde fechaIngreso.
+function calcularVencimiento(fechaIngreso: Date, horas: number, usarHorasHabiles: boolean, cal: CalendarioYFeriados): Date {
+  if (!usarHorasHabiles) {
     return DateTime.fromJSDate(fechaIngreso, { zone: "utc" }).plus({ hours: horas }).toJSDate();
   }
   return sumarHorasHabiles(aDateTime(fechaIngreso), horas, cal.calendario, cal.feriados, ZONA_HORARIA_SLA).toJSDate();
 }
 
-export async function calcularVencimientoOt(manager: ManagerTransaccional, prioridad: Prioridad, fechaIngreso: Date): Promise<Date> {
-  const cfg = await obtenerSlaConfigDe(manager, prioridad);
+export async function calcularVencimientoOt(manager: ManagerTransaccional, prioridadId: string, fechaIngreso: Date): Promise<Date | null> {
+  const { planSla } = await obtenerPrioridadConPlan(manager, prioridadId);
+  if (!planSla) return null;
   const cal = await cargarCalendarioYFeriados(manager);
-  return calcularVencimiento(fechaIngreso, cfg.horasResolucion, cfg, cal);
+  return calcularVencimiento(fechaIngreso, planSla.horasResolucion, planSla.usarHorasHabiles, cal);
 }
 
 export async function calcularVencimientosTicket(
   manager: ManagerTransaccional,
-  prioridad: Prioridad,
+  prioridadId: string,
   fechaIngreso: Date,
-): Promise<{ slaResolucionVenceEn: Date; slaRespuestaVenceEn: Date }> {
-  const cfg = await obtenerSlaConfigDe(manager, prioridad);
+): Promise<{ slaResolucionVenceEn: Date | null; slaRespuestaVenceEn: Date | null }> {
+  const { planSla } = await obtenerPrioridadConPlan(manager, prioridadId);
+  if (!planSla) return { slaResolucionVenceEn: null, slaRespuestaVenceEn: null };
   const cal = await cargarCalendarioYFeriados(manager);
   return {
-    slaResolucionVenceEn: calcularVencimiento(fechaIngreso, cfg.horasResolucion, cfg, cal),
-    slaRespuestaVenceEn: calcularVencimiento(fechaIngreso, cfg.horasPrimeraRespuesta, cfg, cal),
+    slaResolucionVenceEn: calcularVencimiento(fechaIngreso, planSla.horasResolucion, planSla.usarHorasHabiles, cal),
+    slaRespuestaVenceEn: calcularVencimiento(fechaIngreso, planSla.horasPrimeraRespuesta, planSla.usarHorasHabiles, cal),
   };
 }
 
-// PUT /sla/config: recalcula en lote las OT y tickets ABIERTOS de una prioridad, desde su propia
-// fecha_ingreso (no desde ahora). Volumen bajo (~8 usuarios): un bucle de UPDATE dentro de la
-// misma transacción del cambio de config es aceptable, sin colas.
-export async function recalcularAbiertosPorPrioridad(manager: ManagerTransaccional, prioridad: Prioridad, cfg: SlaConfig): Promise<void> {
-  const cal = await cargarCalendarioYFeriados(manager);
+// Recalcula en lote las OT y tickets ABIERTOS de una prioridad, desde su propia fecha_ingreso (no
+// desde ahora). `plan` es el PlanSla vigente para esa prioridad al momento de llamar (null = la
+// prioridad se quedó sin plan: limpia los vencimientos de lo abierto). Volumen bajo (~8 usuarios):
+// un bucle de UPDATE dentro de la misma transacción del cambio es aceptable, sin colas.
+//
+// "Abierto" en ticket ahora se expresa vía estado_ticket.es_terminal (antes `estado NOT IN
+// ('resuelto','cerrado')` literal); en ot sigue igual (EstadoOt no cambia en esta fase).
+export async function recalcularAbiertosPorPrioridad(
+  manager: ManagerTransaccional,
+  prioridadId: string,
+  plan: { horasResolucion: number; horasPrimeraRespuesta: number; usarHorasHabiles: boolean } | null,
+): Promise<void> {
+  const cal = plan ? await cargarCalendarioYFeriados(manager) : null;
 
   const ots: Array<{ id: string; fecha_ingreso: Date }> = await manager.query(
-    `SELECT id, fecha_ingreso FROM ot WHERE prioridad = @0 AND estado NOT IN ('terminado','facturado')`,
-    [prioridad],
+    `SELECT id, fecha_ingreso FROM ot WHERE prioridad_id = @0 AND estado NOT IN ('terminado','facturado')`,
+    [prioridadId],
   );
   for (const ot of ots) {
-    const vence = calcularVencimiento(ot.fecha_ingreso, cfg.horasResolucion, cfg, cal);
-    await manager.query(`UPDATE ot SET sla_resolucion_vence_en = @0 WHERE id = @1`, [vence.toISOString(), ot.id]);
+    const vence = plan && cal ? calcularVencimiento(ot.fecha_ingreso, plan.horasResolucion, plan.usarHorasHabiles, cal) : null;
+    await manager.query(`UPDATE ot SET sla_resolucion_vence_en = @0 WHERE id = @1`, [vence ? vence.toISOString() : null, ot.id]);
   }
 
   const tickets: Array<{ id: string; fecha_ingreso: Date }> = await manager.query(
-    `SELECT id, fecha_ingreso FROM ticket WHERE prioridad = @0 AND estado NOT IN ('resuelto','cerrado')`,
-    [prioridad],
+    `SELECT t.id, t.fecha_ingreso FROM ticket t
+     JOIN estado_ticket e ON e.id = t.estado_id
+     WHERE t.prioridad_id = @0 AND e.es_terminal = 0`,
+    [prioridadId],
   );
   for (const t of tickets) {
-    const resolucion = calcularVencimiento(t.fecha_ingreso, cfg.horasResolucion, cfg, cal);
-    const respuesta = calcularVencimiento(t.fecha_ingreso, cfg.horasPrimeraRespuesta, cfg, cal);
+    const resolucion = plan && cal ? calcularVencimiento(t.fecha_ingreso, plan.horasResolucion, plan.usarHorasHabiles, cal) : null;
+    const respuesta = plan && cal ? calcularVencimiento(t.fecha_ingreso, plan.horasPrimeraRespuesta, plan.usarHorasHabiles, cal) : null;
     await manager.query(`UPDATE ticket SET sla_resolucion_vence_en = @0, sla_respuesta_vence_en = @1 WHERE id = @2`, [
-      resolucion.toISOString(),
-      respuesta.toISOString(),
+      resolucion ? resolucion.toISOString() : null,
+      respuesta ? respuesta.toISOString() : null,
       t.id,
     ]);
   }

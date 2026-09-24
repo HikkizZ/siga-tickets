@@ -38,24 +38,45 @@ async function cliente(): Promise<string> {
   return fila.id;
 }
 
+// Fase C: canal/prioridad/estado ya no son columnas string con CHECK sino FK a catálogos
+// (canal_ticket/prioridad/estado_ticket, sembrados por limpiarBD con los mismos nombres que la
+// migración): se resuelven sus ids antes de insertar.
+async function idCanal(nombre: string): Promise<string> {
+  const [fila] = await sql(`SELECT id FROM canal_ticket WHERE nombre = @0`, [nombre]);
+  return fila.id;
+}
+async function idPrioridad(nombre: string): Promise<string> {
+  const [fila] = await sql(`SELECT id FROM prioridad WHERE nombre = @0`, [nombre]);
+  return fila.id;
+}
+async function idEstadoTicket(nombre: string): Promise<string> {
+  const [fila] = await sql(`SELECT id FROM estado_ticket WHERE nombre = @0`, [nombre]);
+  return fila.id;
+}
+
 async function ticket(email = "ana@test.cl"): Promise<string> {
-  const recep = await usuario();
+  const [recep, canalId, prioridadId, estadoId] = [
+    await usuario(),
+    await idCanal("Teléfono"),
+    await idPrioridad("Media"),
+    await idEstadoTicket("Nuevo"),
+  ];
   const [fila] = await sql(
-    `INSERT INTO ticket (numero, asunto, descripcion, solicitante_nombre, solicitante_email, canal, prioridad, recepcionado_por_id)
+    `INSERT INTO ticket (numero, asunto, descripcion, solicitante_nombre, solicitante_email, canal_id, prioridad_id, estado_id, recepcionado_por_id)
      OUTPUT INSERTED.id
-     VALUES (@0, 'a', 'd', 'Ana', @1, 'telefono', 'media', @2)`,
-    [`TK-${sig()}`, email, recep],
+     VALUES (@0, 'a', 'd', 'Ana', @1, @2, @3, @4, @5)`,
+    [`TK-${sig()}`, email, canalId, prioridadId, estadoId, recep],
   );
   return fila.id;
 }
 
 async function ot(): Promise<string> {
-  const [cli, recep] = [await cliente(), await usuario()];
+  const [cli, recep, prioridadId] = [await cliente(), await usuario(), await idPrioridad("Media")];
   const [fila] = await sql(
-    `INSERT INTO ot (numero, titulo, descripcion, cliente_id, categoria, prioridad, origen, recepcionado_por_id)
+    `INSERT INTO ot (numero, titulo, descripcion, cliente_id, categoria, prioridad_id, origen, recepcionado_por_id)
      OUTPUT INSERTED.id
-     VALUES (@0, 't', 'd', @1, 'soporte', 'media', 'telefono', @2)`,
-    [`OT-${sig()}`, cli, recep],
+     VALUES (@0, 't', 'd', @1, 'soporte', @2, 'telefono', @3)`,
+    [`OT-${sig()}`, cli, prioridadId, recep],
   );
   return fila.id;
 }
@@ -66,13 +87,15 @@ describe("objetos del esquema", () => {
       `SELECT name, filter_definition, is_unique FROM sys.indexes WHERE has_filter = 1`,
     );
     const porNombre = Object.fromEntries(filtrados.map((i) => [i.name, i]));
+    // Fase C: idx_ticket_responsable_abierto / idx_ticket_sla_abierto dejaron de ser filtrados (el
+    // predicado comparaba contra el enum de estado como constante; con "terminal" viviendo ahora en
+    // estado_ticket.es_terminal ya no se puede expresar como índice filtrado — se recrean como
+    // índices normales, ver migrations/1790500000000-CatalogosTicketFaseC.ts).
     expect(Object.keys(porNombre).sort()).toEqual(
       [
         "idx_correo_saliente_pendiente",
         "idx_notificacion_no_leidas",
         "idx_ot_responsable_abierta",
-        "idx_ticket_responsable_abierto",
-        "idx_ticket_sla_abierto",
         "uq_asignacion_tramo_abierto",
         "uq_cotizacion_principal_por_ot",
         "uq_mensaje_ticket_message_id",
@@ -114,7 +137,7 @@ describe("objetos del esquema", () => {
     ]);
   });
 
-  it("semillas: folio_counter, sla_config y calendario_laboral", async () => {
+  it("semillas: folio_counter, prioridad/plan_sla/estado_ticket/canal_ticket y calendario_laboral", async () => {
     const folios = await sql(`SELECT serie, CAST(ultimo AS int) AS ultimo, ancho FROM folio_counter ORDER BY serie`);
     expect(folios).toEqual([
       { serie: "COT", ultimo: 2040, ancho: 4 },
@@ -122,15 +145,35 @@ describe("objetos del esquema", () => {
       { serie: "TK", ultimo: 0, ancho: 4 },
     ]);
 
-    const sla = await sql(
-      `SELECT prioridad, horas_resolucion, horas_primera_respuesta, usar_horas_habiles, pausar_en_espera_cliente,
-              CAST(umbral_por_vencer AS float) AS umbral
-       FROM sla_config ORDER BY horas_resolucion`,
+    // Fase C: sla_config se retiró; el SLA real de cada prioridad ahora vive en el plan_sla al que
+    // apunta (ver test/helpers.ts::limpiarBD, que re-siembra exactamente estas filas entre tests).
+    const prioridades = await sql(
+      `SELECT p.nombre, ps.horas_resolucion, ps.horas_primera_respuesta, ps.usar_horas_habiles, ps.pausar_en_espera_cliente,
+              CAST(ps.umbral_por_vencer AS float) AS umbral
+       FROM prioridad p JOIN plan_sla ps ON ps.id = p.plan_sla_id ORDER BY ps.horas_resolucion`,
     );
-    expect(sla).toEqual([
-      { prioridad: "alta", horas_resolucion: 24, horas_primera_respuesta: 2, usar_horas_habiles: true, pausar_en_espera_cliente: true, umbral: 0.2 },
-      { prioridad: "media", horas_resolucion: 72, horas_primera_respuesta: 8, usar_horas_habiles: true, pausar_en_espera_cliente: true, umbral: 0.2 },
-      { prioridad: "baja", horas_resolucion: 120, horas_primera_respuesta: 24, usar_horas_habiles: true, pausar_en_espera_cliente: true, umbral: 0.2 },
+    expect(prioridades).toEqual([
+      { nombre: "Alta", horas_resolucion: 24, horas_primera_respuesta: 2, usar_horas_habiles: true, pausar_en_espera_cliente: true, umbral: 0.2 },
+      { nombre: "Media", horas_resolucion: 48, horas_primera_respuesta: 8, usar_horas_habiles: true, pausar_en_espera_cliente: true, umbral: 0.2 },
+      { nombre: "Baja", horas_resolucion: 120, horas_primera_respuesta: 24, usar_horas_habiles: true, pausar_en_espera_cliente: true, umbral: 0.2 },
+    ]);
+
+    const estados = await sql(`SELECT nombre, es_estado_inicial, es_destino_reapertura, es_pausa_sla, marca_resuelto_en, marca_cerrado_en, es_terminal FROM estado_ticket ORDER BY orden`);
+    expect(estados).toEqual([
+      { nombre: "Nuevo", es_estado_inicial: true, es_destino_reapertura: false, es_pausa_sla: false, marca_resuelto_en: false, marca_cerrado_en: false, es_terminal: false },
+      { nombre: "Abierto", es_estado_inicial: false, es_destino_reapertura: true, es_pausa_sla: false, marca_resuelto_en: false, marca_cerrado_en: false, es_terminal: false },
+      { nombre: "Esperando cliente", es_estado_inicial: false, es_destino_reapertura: false, es_pausa_sla: true, marca_resuelto_en: false, marca_cerrado_en: false, es_terminal: false },
+      { nombre: "Resuelto", es_estado_inicial: false, es_destino_reapertura: false, es_pausa_sla: false, marca_resuelto_en: true, marca_cerrado_en: false, es_terminal: true },
+      { nombre: "Cerrado", es_estado_inicial: false, es_destino_reapertura: false, es_pausa_sla: false, marca_resuelto_en: false, marca_cerrado_en: true, es_terminal: true },
+    ]);
+
+    const canales = await sql(`SELECT nombre, es_manual, origen_ot_equivalente FROM canal_ticket ORDER BY orden`);
+    expect(canales).toEqual([
+      { nombre: "Portal", es_manual: false, origen_ot_equivalente: "mesa_ayuda" },
+      { nombre: "Correo", es_manual: false, origen_ot_equivalente: "correo" },
+      { nombre: "Teléfono", es_manual: true, origen_ot_equivalente: "telefono" },
+      { nombre: "Presencial", es_manual: true, origen_ot_equivalente: "presencial" },
+      { nombre: "Interno", es_manual: true, origen_ot_equivalente: "interna" },
     ]);
 
     const cal = await sql(
@@ -333,11 +376,11 @@ describe("asignacion", () => {
 });
 
 describe("ot: CHECK de es_interna", () => {
-  const insertar = (esInterna: boolean, area: string | null, cli: string | null) =>
+  const insertar = async (esInterna: boolean, area: string | null, cli: string | null) =>
     sql(
-      `INSERT INTO ot (numero, titulo, descripcion, cliente_id, area_interna, es_interna, categoria, prioridad, origen, recepcionado_por_id)
-       SELECT TOP 1 @0, 't', 'd', @1, @2, @3, 'soporte', 'media', 'interna', id FROM usuario`,
-      [`OT-${sig()}`, cli, area, esInterna],
+      `INSERT INTO ot (numero, titulo, descripcion, cliente_id, area_interna, es_interna, categoria, prioridad_id, origen, recepcionado_por_id)
+       SELECT TOP 1 @0, 't', 'd', @1, @2, @3, 'soporte', @4, 'interna', id FROM usuario`,
+      [`OT-${sig()}`, cli, area, esInterna, await idPrioridad("Media")],
     );
 
   it("acepta interna con área y sin cliente, y no interna con cliente", async () => {

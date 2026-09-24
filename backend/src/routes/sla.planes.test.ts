@@ -34,10 +34,12 @@ describe("GET/POST/PATCH/DELETE /sla/planes (Fase B2)", () => {
     });
     const id = crear.body.data.id as string;
 
+    // Fase C: plan_sla ya no arranca vacío entre tests (Alta/Media/Baja se re-siembran en cada
+    // limpiarBD, ver test/helpers.ts): se busca el plan recién creado dentro de la lista en vez de
+    // asumir que es la única fila.
     const lista = await request(app).get(`${API}/sla/planes`).set("Authorization", admin.auth);
     expect(lista.status).toBe(200);
-    expect(lista.body.data).toHaveLength(1);
-    expect(lista.body.data[0].nombre).toBe("Premium 4h");
+    expect(lista.body.data.map((p: { nombre: string }) => p.nombre)).toContain("Premium 4h");
 
     const editar = await request(app)
       .patch(`${API}/sla/planes/${id}`)
@@ -51,7 +53,7 @@ describe("GET/POST/PATCH/DELETE /sla/planes (Fase B2)", () => {
     expect(borrar.body.data).toBeNull();
 
     const listaFinal = await request(app).get(`${API}/sla/planes`).set("Authorization", admin.auth);
-    expect(listaFinal.body.data).toHaveLength(0);
+    expect(listaFinal.body.data.map((p: { nombre: string }) => p.nombre)).not.toContain("Premium 4h");
   });
 
   it("nombre duplicado: 409 CONFLICT", async () => {

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { Rol } from "../entities/enums.js";
-import { conectarBD, crearUsuarioSistemaTest, limpiarBD } from "../test/helpers.js";
+import { conectarBD, crearUsuarioSistemaTest, limpiarBD, obtenerEstadoTicketPorNombre } from "../test/helpers.js";
 import { API, crearSesionNombrada } from "../test/otHelpers.js";
 import { crearTicketPublicoApi, PORTAL, tokenPortalTest } from "../test/portalHelpers.js";
 
@@ -45,7 +45,11 @@ describe("POST /publico/ticket/mensajes", () => {
     const tecnico = await crearSesionNombrada(Rol.TECNICO, "tecnico_reabre_1");
     const t = await ticketPortal();
     await request(app).post(`${API}/tickets/${t.ticketId}/tomar`).set("Authorization", tecnico.auth);
-    const paso = await request(app).post(`${API}/tickets/${t.ticketId}/estado`).set("Authorization", tecnico.auth).send({ estado: "esperando_cliente" });
+    const esperandoCliente = await obtenerEstadoTicketPorNombre("Esperando cliente");
+    const paso = await request(app)
+      .post(`${API}/tickets/${t.ticketId}/estado`)
+      .set("Authorization", tecnico.auth)
+      .send({ estadoId: esperandoCliente.id });
     expect(paso.status).toBe(200);
     const [pausaAbierta] = await AppDataSource.query(
       `SELECT hasta FROM sla_pausa WHERE entidad_tipo = 'ticket' AND entidad_id = @0`,
@@ -56,8 +60,11 @@ describe("POST /publico/ticket/mensajes", () => {
     const res = await mensajePortal(t.auth, "ya lo revisé");
 
     expect(res.status).toBe(201);
-    const [fila] = await AppDataSource.query(`SELECT estado FROM ticket WHERE id = @0`, [t.ticketId]);
-    expect(fila.estado).toBe("abierto");
+    const [fila] = await AppDataSource.query(
+      `SELECT e.nombre AS estado FROM ticket t JOIN estado_ticket e ON e.id = t.estado_id WHERE t.id = @0`,
+      [t.ticketId],
+    );
+    expect(fila.estado).toBe("Abierto");
     const [pausaCerrada] = await AppDataSource.query(`SELECT hasta FROM sla_pausa WHERE entidad_tipo = 'ticket' AND entidad_id = @0`, [t.ticketId]);
     expect(pausaCerrada.hasta).not.toBeNull();
   });
@@ -66,26 +73,34 @@ describe("POST /publico/ticket/mensajes", () => {
     const tecnico = await crearSesionNombrada(Rol.TECNICO, "tecnico_reabre_2");
     const t = await ticketPortal();
     await request(app).post(`${API}/tickets/${t.ticketId}/tomar`).set("Authorization", tecnico.auth);
-    await request(app).post(`${API}/tickets/${t.ticketId}/estado`).set("Authorization", tecnico.auth).send({ estado: "resuelto" });
+    const resuelto = await obtenerEstadoTicketPorNombre("Resuelto");
+    await request(app).post(`${API}/tickets/${t.ticketId}/estado`).set("Authorization", tecnico.auth).send({ estadoId: resuelto.id });
 
     const res = await mensajePortal(t.auth, "sigue fallando");
 
     expect(res.status).toBe(201);
-    const [fila] = await AppDataSource.query(`SELECT estado FROM ticket WHERE id = @0`, [t.ticketId]);
-    expect(fila.estado).toBe("abierto");
+    const [fila] = await AppDataSource.query(
+      `SELECT e.nombre AS estado FROM ticket t JOIN estado_ticket e ON e.id = t.estado_id WHERE t.id = @0`,
+      [t.ticketId],
+    );
+    expect(fila.estado).toBe("Abierto");
   });
 
   it("NO reabre un ticket cerrado", async () => {
     const tecnico = await crearSesionNombrada(Rol.TECNICO, "tecnico_no_reabre");
     const t = await ticketPortal();
     await request(app).post(`${API}/tickets/${t.ticketId}/tomar`).set("Authorization", tecnico.auth);
-    await request(app).post(`${API}/tickets/${t.ticketId}/estado`).set("Authorization", tecnico.auth).send({ estado: "cerrado" });
+    const cerrado = await obtenerEstadoTicketPorNombre("Cerrado");
+    await request(app).post(`${API}/tickets/${t.ticketId}/estado`).set("Authorization", tecnico.auth).send({ estadoId: cerrado.id });
 
     const res = await mensajePortal(t.auth, "¿siguen ahí?");
 
     expect(res.status).toBe(201);
-    const [fila] = await AppDataSource.query(`SELECT estado FROM ticket WHERE id = @0`, [t.ticketId]);
-    expect(fila.estado).toBe("cerrado");
+    const [fila] = await AppDataSource.query(
+      `SELECT e.nombre AS estado FROM ticket t JOIN estado_ticket e ON e.id = t.estado_id WHERE t.id = @0`,
+      [t.ticketId],
+    );
+    expect(fila.estado).toBe("Cerrado");
   });
 
   it("cuerpo vacío: 400", async () => {

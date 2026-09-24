@@ -19,7 +19,7 @@ describe("POST /tickets con temaAyudaId (Fase B1, aditivo)", () => {
     const departamento = await AppDataSource.getRepository(Departamento).save({ nombre: "Soporte técnico" });
     const tema = await AppDataSource.getRepository(TemaAyuda).save({ nombre: "Falla de hardware", departamentoId: departamento.id });
 
-    const res = await request(app).post(`${API}/tickets`).set("Authorization", auth).send(ticketBody({ temaAyudaId: tema.id }));
+    const res = await request(app).post(`${API}/tickets`).set("Authorization", auth).send(await ticketBody({ temaAyudaId: tema.id }));
 
     expect(res.status).toBe(201);
     expect(res.body.data.temaAyuda).toEqual({ id: tema.id, nombre: "Falla de hardware" });
@@ -40,7 +40,7 @@ describe("POST /tickets con temaAyudaId (Fase B1, aditivo)", () => {
   it("sin temaAyudaId: el ticket se crea igual que antes, con temaAyuda null", async () => {
     const { auth } = await crearSesionNombrada(Rol.TECNICO, "tecnico_sin_tema");
 
-    const res = await request(app).post(`${API}/tickets`).set("Authorization", auth).send(ticketBody());
+    const res = await request(app).post(`${API}/tickets`).set("Authorization", auth).send(await ticketBody());
 
     expect(res.status).toBe(201);
     expect(res.body.data.temaAyuda).toBeNull();
@@ -52,7 +52,7 @@ describe("POST /tickets con temaAyudaId (Fase B1, aditivo)", () => {
     const res = await request(app)
       .post(`${API}/tickets`)
       .set("Authorization", auth)
-      .send(ticketBody({ temaAyudaId: "11111111-1111-4111-8111-111111111111" }));
+      .send(await ticketBody({ temaAyudaId: "11111111-1111-4111-8111-111111111111" }));
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("TEMA_AYUDA_INVALIDO");
@@ -67,7 +67,7 @@ describe("POST /tickets con temaAyudaId (Fase B1, aditivo)", () => {
     const res = await request(app)
       .post(`${API}/tickets`)
       .set("Authorization", auth)
-      .send(ticketBody({ temaAyudaId: crear.body.data.id }));
+      .send(await ticketBody({ temaAyudaId: crear.body.data.id }));
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("TEMA_AYUDA_INVALIDO");

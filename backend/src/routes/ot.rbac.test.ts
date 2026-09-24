@@ -53,7 +53,7 @@ const CASOS: Caso[] = [
   { nombre: "GET /ots/:id", armar: (e) => ({ metodo: "get", url: `/ots/${e.otId}` }), ok: TODOS_AUTENTICADOS, exito: 200 },
   {
     nombre: "POST /ots",
-    armar: (e) => ({ metodo: "post", url: "/ots", body: otBody(e.cliente.id) }),
+    armar: async (e) => ({ metodo: "post", url: "/ots", body: await otBody(e.cliente.id) }),
     ok: CREADORES,
     exito: 201,
   },

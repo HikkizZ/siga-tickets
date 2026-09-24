@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { env } from "../config/env.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API } from "../test/otHelpers.js";
 import { crearEscenarioTicket } from "../test/ticketHelpers.js";
 
@@ -96,10 +96,11 @@ describe("POST /adjuntos generalizado (Fase 3): entidadTipo=ticket y entidadTipo
 
   it("el flujo de adjuntos de OT sigue funcionando igual que antes de la generalización", async () => {
     const e = await crearEscenarioTicket();
+    const media = await obtenerPrioridadPorNombre("Media");
     const ot = await request(app)
       .post(`${API}/ots`)
       .set("Authorization", e.admin.auth)
-      .send({ titulo: "OT", descripcion: "d", clienteId: e.cliente.id, categoria: "soporte", prioridad: "media", origen: "telefono" });
+      .send({ titulo: "OT", descripcion: "d", clienteId: e.cliente.id, categoria: "soporte", prioridadId: media.id, origen: "telefono" });
 
     const res = await subir(e.admin.auth, "ot", ot.body.data.id);
 

@@ -2,7 +2,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerCanalTicketPorNombre, obtenerEstadoTicketPorNombre, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API } from "../test/otHelpers.js";
 import { crearEscenarioTicket } from "../test/ticketHelpers.js";
 
@@ -22,7 +22,7 @@ describe("POST /tickets/:id/mensajes", () => {
     expect(res.status).toBe(201);
     expect(res.body.data).toMatchObject({ tipo: "nota_interna", autor: { id: e.resp.usuario.id } });
     const t = await ticket(e.resp.auth, e.ticketId);
-    expect(t.estado).toBe("nuevo"); // tomar no cambia el estado; nota_interna tampoco
+    expect(t.estado.nombre).toBe("Nuevo"); // tomar no cambia el estado; nota_interna tampoco
     expect(t.primeraRespuestaEn).toBeNull();
 
     const ev = await AppDataSource.query(`SELECT tipo, payload FROM evento WHERE entidad_tipo = 'ticket' AND tipo = 'nota_interna'`);
@@ -31,6 +31,7 @@ describe("POST /tickets/:id/mensajes", () => {
 
   it("primera respuesta_cliente fija primera_respuesta_en una sola vez y pasa nuevo→abierto", async () => {
     const admin = (await crearEscenarioTicket()).admin;
+    const [canal, prioridad] = await Promise.all([obtenerCanalTicketPorNombre("Teléfono"), obtenerPrioridadPorNombre("Alta")]);
     // Ticket recién creado (nuevo, sin tomar) para probar la transición nuevo→abierto.
     const nuevoRes = await request(app)
       .post(`${API}/tickets`)
@@ -40,17 +41,17 @@ describe("POST /tickets/:id/mensajes", () => {
         descripcion: "desc",
         solicitanteNombre: "Ana",
         solicitanteEmail: "ana@test.local",
-        canal: "telefono",
-        prioridad: "alta",
+        canalId: canal.id,
+        prioridadId: prioridad.id,
       });
     const ticketId = nuevoRes.body.data.id;
-    expect(nuevoRes.body.data.estado).toBe("nuevo");
+    expect(nuevoRes.body.data.estado.nombre).toBe("Nuevo");
     await request(app).post(`${API}/tickets/${ticketId}/tomar`).set("Authorization", admin.auth);
 
     const res1 = await mensaje(admin.auth, ticketId, { tipo: "respuesta_cliente", cuerpo: "Estamos revisando" });
     expect(res1.status).toBe(201);
     const t1 = await ticket(admin.auth, ticketId);
-    expect(t1.estado).toBe("abierto");
+    expect(t1.estado.nombre).toBe("Abierto");
     expect(t1.primeraRespuestaEn).not.toBeNull();
     const primera = t1.primeraRespuestaEn;
 
@@ -60,18 +61,19 @@ describe("POST /tickets/:id/mensajes", () => {
     expect(res2.status).toBe(201);
     const t2 = await ticket(admin.auth, ticketId);
     expect(t2.primeraRespuestaEn).toBe(primera);
-    expect(t2.estado).toBe("abierto");
+    expect(t2.estado.nombre).toBe("Abierto");
     expect(t2.mensajes).toHaveLength(2);
   });
 
   it("respuesta_cliente en un ticket esperando_cliente o resuelto NO lo reabre: se agrega al hilo sin tocar el estado", async () => {
     const e = await crearEscenarioTicket();
-    for (const estado of ["esperando_cliente", "resuelto"]) {
-      await request(app).post(`${API}/tickets/${e.ticketId}/estado`).set("Authorization", e.resp.auth).send({ estado });
-      const res = await mensaje(e.resp.auth, e.ticketId, { tipo: "respuesta_cliente", cuerpo: `Actualización para ${estado}` });
+    for (const nombreEstado of ["Esperando cliente", "Resuelto"]) {
+      const estado = await obtenerEstadoTicketPorNombre(nombreEstado);
+      await request(app).post(`${API}/tickets/${e.ticketId}/estado`).set("Authorization", e.resp.auth).send({ estadoId: estado.id });
+      const res = await mensaje(e.resp.auth, e.ticketId, { tipo: "respuesta_cliente", cuerpo: `Actualización para ${nombreEstado}` });
       expect(res.status).toBe(201);
       const t = await ticket(e.resp.auth, e.ticketId);
-      expect(t.estado).toBe(estado);
+      expect(t.estado.nombre).toBe(nombreEstado);
     }
   });
 

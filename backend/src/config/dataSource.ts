@@ -10,6 +10,7 @@ import { ConfiguracionCorreo1790100000000 } from "../migrations/1790100000000-Co
 import { DepartamentosYTemasAyuda1790200000000 } from "../migrations/1790200000000-DepartamentosYTemasAyuda.js";
 import { PlanSlaYPlantillaCorreo1790300000000 } from "../migrations/1790300000000-PlanSlaYPlantillaCorreo.js";
 import { CuentaPortal1790400000000 } from "../migrations/1790400000000-CuentaPortal.js";
+import { CatalogosTicketFaseC1790500000000 } from "../migrations/1790500000000-CatalogosTicketFaseC.js";
 
 export const AppDataSource = new DataSource({
   type: "mssql",
@@ -37,5 +38,6 @@ export const AppDataSource = new DataSource({
     DepartamentosYTemasAyuda1790200000000,
     PlanSlaYPlantillaCorreo1790300000000,
     CuentaPortal1790400000000,
+    CatalogosTicketFaseC1790500000000,
   ],
 });

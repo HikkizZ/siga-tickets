@@ -10,15 +10,18 @@ import { requestLogger } from "../middlewares/requestLogger.js";
 import { adjuntoRouter } from "../routes/adjunto.routes.js";
 import { authRouter } from "../routes/auth.routes.js";
 import { buscarRouter } from "../routes/buscar.routes.js";
+import { canalTicketRouter } from "../routes/canalTicket.routes.js";
 import { clienteRouter } from "../routes/cliente.routes.js";
 import { correoConfigRouter } from "../routes/correoConfig.routes.js";
 import { correoIngeridoRouter } from "../routes/correoIngerido.routes.js";
 import { cotizacionRouter } from "../routes/cotizacion.routes.js";
 import { dashboardRouter } from "../routes/dashboard.routes.js";
 import { departamentoRouter } from "../routes/departamento.routes.js";
+import { estadoTicketRouter } from "../routes/estadoTicket.routes.js";
 import { notificacionRouter } from "../routes/notificacion.routes.js";
 import { otRouter } from "../routes/ot.routes.js";
 import { portalRouter } from "../routes/portal.routes.js";
+import { prioridadRouter } from "../routes/prioridad.routes.js";
 import { slaRouter } from "../routes/sla.routes.js";
 import { temaAyudaRouter } from "../routes/temaAyuda.routes.js";
 import { ticketRouter } from "../routes/ticket.routes.js";
@@ -55,6 +58,9 @@ app.use("/api/v1/dashboard", dashboardRouter);
 app.use("/api/v1/buscar", buscarRouter);
 app.use("/api/v1/departamentos", departamentoRouter);
 app.use("/api/v1/temas-ayuda", temaAyudaRouter);
+app.use("/api/v1/prioridades", prioridadRouter);
+app.use("/api/v1/estados-ticket", estadoTicketRouter);
+app.use("/api/v1/fuentes-ticket", canalTicketRouter);
 
 // Portal público (Fase 5): sin JWT interno, sin prefijo /api/v1 (ver docs/backend-diseno.md sección 4).
 app.use("/publico", portalRouter);

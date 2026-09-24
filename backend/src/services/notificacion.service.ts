@@ -139,15 +139,21 @@ export async function resumenNotificaciones(): Promise<{
        ORDER BY sla_resolucion_vence_en ASC`,
     ) as Promise<FilaResumen[]>,
     AppDataSource.query(
-      `SELECT id, numero FROM ot WHERE prioridad = 'alta' AND estado NOT IN ('terminado','facturado')
-       ORDER BY fecha_ingreso ASC`,
+      `SELECT o.id, o.numero FROM ot o JOIN prioridad p ON p.id = o.prioridad_id
+       WHERE p.nombre = N'Alta' AND o.estado NOT IN ('terminado','facturado')
+       ORDER BY o.fecha_ingreso ASC`,
     ) as Promise<FilaResumen[]>,
     AppDataSource.query(
       `SELECT o.id, o.numero FROM ot o
        WHERE o.estado = 'en_cotizacion' OR EXISTS (SELECT 1 FROM cotizacion c WHERE c.ot_id = o.id AND c.estado = 'enviada')
        ORDER BY o.fecha_ingreso ASC`,
     ) as Promise<FilaResumen[]>,
-    AppDataSource.query(`SELECT id, numero FROM ticket WHERE estado = 'nuevo' ORDER BY fecha_ingreso ASC`) as Promise<FilaResumen[]>,
+    // Fase C: "nuevo" ya no es un valor de enum; se identifica por el flag esEstadoInicial (ver
+    // entities/EstadoTicket.ts), no por nombre.
+    AppDataSource.query(
+      `SELECT t.id, t.numero FROM ticket t JOIN estado_ticket e ON e.id = t.estado_id
+       WHERE e.es_estado_inicial = 1 ORDER BY t.fecha_ingreso ASC`,
+    ) as Promise<FilaResumen[]>,
   ]);
 
   return {

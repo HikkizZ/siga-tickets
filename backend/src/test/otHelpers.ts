@@ -5,6 +5,7 @@ import { AppDataSource } from "../config/dataSource.js";
 import { Cliente } from "../entities/Cliente.js";
 import { Usuario } from "../entities/Usuario.js";
 import { Rol } from "../entities/enums.js";
+import { obtenerPrioridadPorNombre } from "./helpers.js";
 
 export interface Sesion {
   usuario: Usuario;
@@ -34,19 +35,28 @@ export async function crearClienteTest(nombre = "Cliente Test", activo = true): 
   return AppDataSource.getRepository(Cliente).save({ nombre, activo });
 }
 
-export const otBody = (clienteId: string, extra: Record<string, unknown> = {}) => ({
-  titulo: "Mantención de bomba",
-  descripcion: "Revisar la bomba principal",
-  clienteId,
-  categoria: "mantencion",
-  prioridad: "media",
-  origen: "telefono",
-  ...extra,
-});
+// Fase C: prioridad ya no es un valor de enum fijo ("media") sino un catálogo con uuid; resuelve
+// "Media" por nombre (misma fila sembrada por la migración, ver test/helpers.ts::limpiarBD). Async
+// a diferencia de la Fase B: hace falta consultar la BD para resolver ese id.
+export async function otBody(clienteId: string, extra: Record<string, unknown> = {}) {
+  const prioridad = await obtenerPrioridadPorNombre("Media");
+  return {
+    titulo: "Mantención de bomba",
+    descripcion: "Revisar la bomba principal",
+    clienteId,
+    categoria: "mantencion",
+    prioridadId: prioridad.id,
+    origen: "telefono",
+    ...extra,
+  };
+}
 
 // Crea una OT por la API y devuelve el detalle.
 export async function crearOtApi(auth: string, clienteId: string, extra: Record<string, unknown> = {}) {
-  const res = await request(app).post("/api/v1/ots").set("Authorization", auth).send(otBody(clienteId, extra));
+  const res = await request(app)
+    .post("/api/v1/ots")
+    .set("Authorization", auth)
+    .send(await otBody(clienteId, extra));
   if (res.status !== 201) throw new Error(`crearOtApi falló: ${res.status} ${JSON.stringify(res.body)}`);
   return res.body.data as {
     id: string;

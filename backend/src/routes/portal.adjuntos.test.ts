@@ -5,7 +5,7 @@ import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { env } from "../config/env.js";
 import { Rol } from "../entities/enums.js";
-import { conectarBD, crearUsuarioSistemaTest, limpiarBD } from "../test/helpers.js";
+import { conectarBD, crearUsuarioSistemaTest, limpiarBD, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API, crearSesionNombrada } from "../test/otHelpers.js";
 import { crearTicketPublicoApi, PORTAL, tokenPortalTest } from "../test/portalHelpers.js";
 
@@ -152,10 +152,11 @@ describe("GET /publico/adjuntos/:id/descargar", () => {
     const clienteId = cliente[0]
       ? (cliente[0].id as string)
       : ((await AppDataSource.query(`INSERT INTO cliente (nombre) OUTPUT inserted.id VALUES ('Cliente adj ot test')`))[0].id as string);
+    const media = await obtenerPrioridadPorNombre("Media");
     const ot = await request(app)
       .post(`${API}/ots`)
       .set("Authorization", gestion.auth)
-      .send({ titulo: "OT test", descripcion: "desc", clienteId, categoria: "soporte", prioridad: "media", origen: "telefono" });
+      .send({ titulo: "OT test", descripcion: "desc", clienteId, categoria: "soporte", prioridadId: media.id, origen: "telefono" });
     const adj = await request(app)
       .post(`${API}/adjuntos`)
       .set("Authorization", gestion.auth)

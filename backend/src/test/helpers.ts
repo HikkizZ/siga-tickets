@@ -1,6 +1,9 @@
 import { AppDataSource } from "../config/dataSource.js";
 import { env } from "../config/env.js";
+import { CanalTicket } from "../entities/CanalTicket.js";
 import { CuentaPortal } from "../entities/CuentaPortal.js";
+import { EstadoTicket } from "../entities/EstadoTicket.js";
+import { Prioridad } from "../entities/Prioridad.js";
 import { Usuario } from "../entities/Usuario.js";
 import { Rol } from "../entities/enums.js";
 import { hashPassword } from "../auth/password.js";
@@ -8,11 +11,19 @@ import { signToken } from "../auth/jwt.js";
 import { _resetCacheUsuarioSistemaParaTests } from "../services/usuarioSistema.service.js";
 
 // Tablas con semilla de la migración: no se vacían (folio_counter se restablece aparte).
-const CON_SEMILLA = ["folio_counter", "sla_config", "calendario_laboral", "migrations"];
+const CON_SEMILLA = ["folio_counter", "calendario_laboral", "migrations"];
 
 // Hijos antes que padres (los FK de SQL Server impiden TRUNCATE de tablas referenciadas, así que
 // se usa DELETE). evento es la excepción: su trigger rechaza DELETE, y como nadie la referencia
 // sí admite TRUNCATE (que no dispara triggers).
+//
+// Fase C: prioridad/estado_ticket/canal_ticket pasan a ser obligatorios (FK NOT NULL desde
+// ticket/ot con ON DELETE NO ACTION): deben ir DESPUÉS de ot, ticket y tema_ayuda (que las
+// referencian). plan_sla es a su vez "padre" de prioridad (prioridad.plan_sla_id, ON DELETE SET
+// NULL — el orden no es estrictamente obligatorio ahí, pero se mantiene el mismo criterio
+// "hijos antes que padres" del resto de la lista): se mueve de su posición anterior a justo
+// después de prioridad. Las 4 se re-siembran después del loop de limpieza (ver más abajo), ya que
+// a diferencia de las demás tablas de este bloque no pueden quedar vacías entre tests.
 const ORDEN_LIMPIEZA = [
   // Fase D: sin FK hacia/desde ninguna otra tabla, puede ir en cualquier posición de la lista.
   "cuenta_portal",
@@ -22,7 +33,6 @@ const ORDEN_LIMPIEZA = [
   "configuracion_correo",
   "plantilla_correo",
   "sla_pausa",
-  "plan_sla",
   "feriado",
   "notificacion",
   "adjunto",
@@ -38,6 +48,10 @@ const ORDEN_LIMPIEZA = [
   "ot",
   "ticket",
   "tema_ayuda",
+  "prioridad",
+  "plan_sla",
+  "estado_ticket",
+  "canal_ticket",
   "cliente",
   "usuario",
   "departamento",
@@ -64,17 +78,52 @@ export async function limpiarBD(): Promise<void> {
   await AppDataSource.query(
     "UPDATE folio_counter SET ultimo = CASE serie WHEN 'TK' THEN 0 WHEN 'OT' THEN 1040 WHEN 'COT' THEN 2040 END",
   );
-  // sla_config está en CON_SEMILLA (no se trunca): la Fase 4 agrega PUT /sla/config, que lo muta,
-  // así que hay que devolverlo a la semilla entre tests o un test dejaría el valor filtrado hacia
-  // los siguientes archivos (la suite comparte una sola BD, en serie).
+
+  // prioridad/plan_sla/estado_ticket/canal_ticket están en ORDEN_LIMPIEZA (SÍ se truncan, a
+  // diferencia de sla_config antes): a diferencia del resto de esa lista, no pueden quedar vacías
+  // entre tests (FK NOT NULL desde ticket/ot). Se re-siembran aquí con EXACTAMENTE las mismas filas
+  // que sembró la migración 1790500000000-CatalogosTicketFaseC.ts (mismos nombres/flags literales),
+  // para que los tests puedan resolverlas por nombre vía obtenerXPorNombre() más abajo.
   await AppDataSource.query(`
-    UPDATE sla_config SET
-      horas_resolucion = CASE prioridad WHEN 'alta' THEN 24 WHEN 'media' THEN 72 ELSE 120 END,
-      horas_primera_respuesta = CASE prioridad WHEN 'alta' THEN 2 WHEN 'media' THEN 8 ELSE 24 END,
-      usar_horas_habiles = 1,
-      pausar_en_espera_cliente = 1,
-      umbral_por_vencer = 0.20
-  `);
+    INSERT INTO plan_sla (nombre, horas_resolucion, horas_primera_respuesta, usar_horas_habiles, pausar_en_espera_cliente, umbral_por_vencer) VALUES
+      (N'Alta',  24, 2,  1, 1, 0.20),
+      (N'Media', 48, 8,  1, 1, 0.20),
+      (N'Baja', 120, 24, 1, 1, 0.20)`);
+  await AppDataSource.query(`
+    INSERT INTO prioridad (nombre, orden, plan_sla_id) VALUES
+      (N'Alta',  1, (SELECT id FROM plan_sla WHERE nombre = N'Alta')),
+      (N'Media', 2, (SELECT id FROM plan_sla WHERE nombre = N'Media')),
+      (N'Baja',  3, (SELECT id FROM plan_sla WHERE nombre = N'Baja'))`);
+  await AppDataSource.query(`
+    INSERT INTO estado_ticket
+      (nombre, orden, es_estado_inicial, es_destino_reapertura, es_pausa_sla, marca_resuelto_en, marca_cerrado_en, es_terminal)
+    VALUES
+      (N'Nuevo',              1, 1, 0, 0, 0, 0, 0),
+      (N'Abierto',            2, 0, 1, 0, 0, 0, 0),
+      (N'Esperando cliente',  3, 0, 0, 1, 0, 0, 0),
+      (N'Resuelto',           4, 0, 0, 0, 1, 0, 1),
+      (N'Cerrado',            5, 0, 0, 0, 0, 1, 1)`);
+  await AppDataSource.query(`
+    INSERT INTO canal_ticket (nombre, orden, es_manual, origen_ot_equivalente) VALUES
+      (N'Portal',     1, 0, 'mesa_ayuda'),
+      (N'Correo',     2, 0, 'correo'),
+      (N'Teléfono',   3, 1, 'telefono'),
+      (N'Presencial', 4, 1, 'presencial'),
+      (N'Interno',    5, 1, 'interna')`);
+}
+
+// Helpers para que los tests sigan siendo legibles ("Alta"/"Nuevo"/"Portal") sin hardcodear uuids
+// (que cambian en cada limpiarBD(), al re-sembrarse con NEWID()). Fase C.
+export async function obtenerPrioridadPorNombre(nombre: string): Promise<Prioridad> {
+  return AppDataSource.getRepository(Prioridad).findOneByOrFail({ nombre });
+}
+
+export async function obtenerEstadoTicketPorNombre(nombre: string): Promise<EstadoTicket> {
+  return AppDataSource.getRepository(EstadoTicket).findOneByOrFail({ nombre });
+}
+
+export async function obtenerCanalTicketPorNombre(nombre: string): Promise<CanalTicket> {
+  return AppDataSource.getRepository(CanalTicket).findOneByOrFail({ nombre });
 }
 
 export async function crearUsuarioTest(

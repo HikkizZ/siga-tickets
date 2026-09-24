@@ -2,14 +2,18 @@ import { randomUUID } from "node:crypto";
 import { Not } from "typeorm";
 import { AppDataSource } from "../config/dataSource.js";
 import { env } from "../config/env.js";
+import { CanalTicket } from "../entities/CanalTicket.js";
+import { EstadoTicket } from "../entities/EstadoTicket.js";
 import { MensajeTicket } from "../entities/MensajeTicket.js";
+import { Prioridad } from "../entities/Prioridad.js";
 import { Ticket } from "../entities/Ticket.js";
-import { CanalTicket, EntidadAdjunto, EstadoTicket, TipoMensajeTicket, type Prioridad } from "../entities/enums.js";
+import { EntidadAdjunto, TipoMensajeTicket } from "../entities/enums.js";
+import { AppError } from "../errors/AppError.js";
 import type { ArchivoSubido } from "./adjunto.service.js";
 import { guardarAdjunto, validarArchivo, verificarCuotaAdjunto } from "./adjunto.service.js";
 import { encolarCorreo } from "./correo.service.js";
 import { registrarEventoTicket } from "./evento.service.js";
-import { enTransaccion, siguienteFolio } from "./folio.service.js";
+import { enTransaccion, siguienteFolio, type ManagerTransaccional } from "./folio.service.js";
 import { ahoraDb } from "./ot.common.js";
 import { calcularVencimientosTicket } from "./sla.calculo.service.js";
 import { ticketNoEncontrado } from "./ticket.common.js";
@@ -23,8 +27,18 @@ export interface CrearTicketPublicoInput {
   empresa?: string | undefined;
   asunto: string;
   descripcion: string;
-  prioridad: Prioridad;
+  // Fase C: ya no es un enum fijo con default de Zod; si no viene, se resuelve a la fila "Media"
+  // sembrada por la migración (mismo default que antes), y se valida existencia+activo igual que
+  // en ticket.service.ts::crearTicket si el solicitante sí la especifica.
+  prioridadId?: string | undefined;
   archivos: ArchivoSubido[];
+}
+
+async function resolverPrioridadPortal(manager: ManagerTransaccional, prioridadId: string | undefined): Promise<Prioridad> {
+  if (!prioridadId) return manager.findOneByOrFail(Prioridad, { nombre: "Media" });
+  const p = await manager.findOne(Prioridad, { where: { id: prioridadId } });
+  if (!p || !p.activo) throw new AppError(400, "PRIORIDAD_INVALIDA", "prioridadId debe ser una prioridad existente y activa");
+  return p;
 }
 
 export async function crearTicketPublico(input: CrearTicketPublicoInput): Promise<{ numero: string }> {
@@ -35,7 +49,12 @@ export async function crearTicketPublico(input: CrearTicketPublicoInput): Promis
 
     const numero = await siguienteFolio(m, "TK");
     const fechaIngreso = await ahoraDb(m);
-    const { slaResolucionVenceEn, slaRespuestaVenceEn } = await calcularVencimientosTicket(m, input.prioridad, fechaIngreso);
+    const [canal, estadoInicial, prioridad] = await Promise.all([
+      m.findOneByOrFail(CanalTicket, { nombre: "Portal" }),
+      m.findOneByOrFail(EstadoTicket, { esEstadoInicial: true }),
+      resolverPrioridadPortal(m, input.prioridadId),
+    ]);
+    const { slaResolucionVenceEn, slaRespuestaVenceEn } = await calcularVencimientosTicket(m, prioridad.id, fechaIngreso);
 
     await m.save(
       Ticket,
@@ -49,9 +68,9 @@ export async function crearTicketPublico(input: CrearTicketPublicoInput): Promis
         solicitanteTelefono: null,
         solicitanteEmpresa: input.empresa ?? null,
         clienteId: null,
-        canal: CanalTicket.PORTAL,
-        prioridad: input.prioridad,
-        estado: EstadoTicket.NUEVO,
+        canalId: canal.id,
+        prioridadId: prioridad.id,
+        estadoId: estadoInicial.id,
         fechaIngreso,
         recepcionadoPorId: sistemaId, // nunca del body: el portal no tiene sesión (ver encargo punto 1)
         responsableActualId: null,
@@ -63,7 +82,7 @@ export async function crearTicketPublico(input: CrearTicketPublicoInput): Promis
     await registrarEventoTicket(m, ticketId, sistemaId, {
       tipo: "creado",
       numero,
-      canal: CanalTicket.PORTAL,
+      canal: canal.nombre,
       recepcionadoPorId: sistemaId,
       clienteId: null,
     });
@@ -125,12 +144,12 @@ interface MensajePortalOrigen {
   creadoEn: Date;
 }
 
-export function toPortalTicket(ticket: Ticket, mensajes: MensajePortalOrigen[], ot: OtPortal | null) {
+export function toPortalTicket(ticket: Ticket, estadoNombre: string, mensajes: MensajePortalOrigen[], ot: OtPortal | null) {
   return {
     numero: ticket.numero,
     asunto: ticket.asunto,
     descripcion: ticket.descripcion,
-    estado: ticket.estado,
+    estado: estadoNombre,
     fechaIngreso: ticket.fechaIngreso,
     mensajes: mensajes.map((m) => ({
       id: m.id,
@@ -147,6 +166,11 @@ export function toPortalTicket(ticket: Ticket, mensajes: MensajePortalOrigen[], 
 // duplicar la consulta de mensajes/OT vinculada: recibe el ticket ya resuelto (por id o por
 // número+pertenencia, según el llamador) y arma el mismo DTO reducido.
 export async function construirDetalleTicketPortal(ticket: Ticket) {
+  // Fase C: estado ya no es una columna string en el propio ticket; se resuelve por separado
+  // (nunca se carga la relación completa acá: mismo criterio de "solo lo necesario" del resto del
+  // portal público, ver toPortalOt/toPortalTicket).
+  const estado = await AppDataSource.getRepository(EstadoTicket).findOneByOrFail({ id: ticket.estadoId });
+
   // Excluye nota_interna con un WHERE en la consulta (Not(...) → `tipo <> @0`), nunca con un
   // filtro en memoria (mismo criterio ya previsto para el portal desde la Fase 3, ver
   // entities/MensajeTicket.ts).
@@ -170,7 +194,7 @@ export async function construirDetalleTicketPortal(ticket: Ticket) {
     ? { estado: otsVinculadas[0].estado, fechaEstimadaTermino: otsVinculadas[0].fecha_estimada_termino, responsableNombre: otsVinculadas[0].responsable_nombre }
     : null;
 
-  return toPortalTicket(ticket, mensajes, ot);
+  return toPortalTicket(ticket, estado.nombre, mensajes, ot);
 }
 
 export async function obtenerTicketPortal(ticketId: string) {

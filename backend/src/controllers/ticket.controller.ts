@@ -50,7 +50,7 @@ export async function actualizarTicketController(req: Request, res: Response): P
 
 export async function cambiarEstadoTicketController(req: Request, res: Response): Promise<void> {
   const { params, body } = validado(req, cambiarEstadoTicketReq);
-  res.json({ status: "ok", data: await cambiarEstadoTicket(actor(req), params.id, body.estado) });
+  res.json({ status: "ok", data: await cambiarEstadoTicket(actor(req), params.id, body.estadoId) });
 }
 
 export async function tomarTicketController(req: Request, res: Response): Promise<void> {

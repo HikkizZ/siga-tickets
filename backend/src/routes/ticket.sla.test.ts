@@ -5,7 +5,7 @@ import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { Rol } from "../entities/enums.js";
 import { horasHabilesEntre, sumarHorasHabiles, ZONA_HORARIA_SLA } from "../sla/horasHabiles.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerEstadoTicketPorNombre, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API, crearSesionNombrada } from "../test/otHelpers.js";
 import { calendarioYFeriadosReales } from "../test/slaHelpers.js";
 import { crearTicketApi } from "../test/ticketHelpers.js";
@@ -14,8 +14,11 @@ beforeAll(conectarBD);
 beforeEach(limpiarBD);
 afterAll(() => AppDataSource.destroy());
 
-const HORAS_RESOLUCION: Record<string, number> = { alta: 24, media: 72, baja: 120 };
+// Fase C: sla_config se retiró; los mismos valores reales (24h/2h, 48h/8h, 120h/24h) ahora viven en
+// plan_sla, sembrados por la migración y por test/helpers.ts::limpiarBD con los mismos literales.
+const HORAS_RESOLUCION: Record<string, number> = { alta: 24, media: 48, baja: 120 };
 const HORAS_RESPUESTA: Record<string, number> = { alta: 2, media: 8, baja: 24 };
+const NOMBRE_PRIORIDAD: Record<string, string> = { alta: "Alta", media: "Media", baja: "Baja" };
 
 async function detalleTicket(auth: string, id: string) {
   const res = await request(app).get(`${API}/tickets/${id}`).set("Authorization", auth);
@@ -28,13 +31,16 @@ async function detalleTicket(auth: string, id: string) {
   };
 }
 
-const cambiarEstado = (auth: string, id: string, estado: string) =>
-  request(app).post(`${API}/tickets/${id}/estado`).set("Authorization", auth).send({ estado });
+const cambiarEstado = async (auth: string, id: string, nombreEstado: string) => {
+  const estado = await obtenerEstadoTicketPorNombre(nombreEstado);
+  return request(app).post(`${API}/tickets/${id}/estado`).set("Authorization", auth).send({ estadoId: estado.id });
+};
 
 describe("SLA al crear/editar un ticket (Fase 4)", () => {
   it.each(["alta", "media", "baja"] as const)("calcula ambos vencimientos (resolución y respuesta) para la prioridad %s", async (prioridad) => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_tk_sla");
-    const t = await crearTicketApi(admin.auth, { prioridad });
+    const prioridadFila = await obtenerPrioridadPorNombre(NOMBRE_PRIORIDAD[prioridad]!);
+    const t = await crearTicketApi(admin.auth, { prioridadId: prioridadFila.id });
     const detalle = await detalleTicket(admin.auth, t.id);
 
     const { calendario, feriados } = await calendarioYFeriadosReales();
@@ -48,10 +54,11 @@ describe("SLA al crear/editar un ticket (Fase 4)", () => {
 
   it("cambiar la prioridad recalcula ambos vencimientos desde la fecha_ingreso ORIGINAL", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_tk_sla2");
-    const t = await crearTicketApi(admin.auth, { prioridad: "baja" });
+    const [baja, alta] = await Promise.all([obtenerPrioridadPorNombre("Baja"), obtenerPrioridadPorNombre("Alta")]);
+    const t = await crearTicketApi(admin.auth, { prioridadId: baja.id });
     const antes = await detalleTicket(admin.auth, t.id);
 
-    const res = await request(app).patch(`${API}/tickets/${t.id}`).set("Authorization", admin.auth).send({ prioridad: "alta" });
+    const res = await request(app).patch(`${API}/tickets/${t.id}`).set("Authorization", admin.auth).send({ prioridadId: alta.id });
     expect(res.status).toBe(200);
 
     const { calendario, feriados } = await calendarioYFeriadosReales();
@@ -68,12 +75,13 @@ describe("SLA al crear/editar un ticket (Fase 4)", () => {
 describe("Pausa del SLA en esperando_cliente (Fase 4, solo tickets)", () => {
   it("abre sla_pausa al entrar y la cierra al salir, corriendo el vencimiento por las horas hábiles pausadas; no afecta a la OT", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_pausa1");
-    const t = await crearTicketApi(admin.auth, { prioridad: "media" });
+    const media = await obtenerPrioridadPorNombre("Media");
+    const t = await crearTicketApi(admin.auth, { prioridadId: media.id });
     await request(app).post(`${API}/tickets/${t.id}/tomar`).set("Authorization", admin.auth);
     const antes = await detalleTicket(admin.auth, t.id);
 
     // Entrar a esperando_cliente: abre la pausa.
-    const r1 = await cambiarEstado(admin.auth, t.id, "esperando_cliente");
+    const r1 = await cambiarEstado(admin.auth, t.id, "Esperando cliente");
     expect(r1.status).toBe(200);
 
     const pausasAbiertas: Array<{ desde: Date; hasta: Date | null }> = await AppDataSource.query(
@@ -96,7 +104,7 @@ describe("Pausa del SLA en esperando_cliente (Fase 4, solo tickets)", () => {
     ]);
 
     // Salir de esperando_cliente: cierra la pausa y corre el vencimiento.
-    const r2 = await cambiarEstado(admin.auth, t.id, "abierto");
+    const r2 = await cambiarEstado(admin.auth, t.id, "Abierto");
     expect(r2.status).toBe(200);
 
     const [{ sla_pausado_desde: pausadoDespues }] = await AppDataSource.query(`SELECT sla_pausado_desde FROM ticket WHERE id = @0`, [t.id]);
@@ -141,19 +149,21 @@ describe("Pausa del SLA en esperando_cliente (Fase 4, solo tickets)", () => {
     expect(new Date(despues.slaResolucionVenceEn!).getTime()).toBeGreaterThan(new Date(antes.slaResolucionVenceEn!).getTime());
   });
 
-  it("no abre pausa si sla_config[prioridad].pausarEnEsperaCliente es false", async () => {
+  it("no abre pausa si el plan SLA de la prioridad tiene pausarEnEsperaCliente=false", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_pausa2");
-    // Apaga la pausa para 'baja' antes de crear el ticket.
+    // Apaga la pausa en el plan SLA de 'Baja' antes de crear el ticket (Fase C: sla_config se
+    // retiró; el SLA real ahora vive en plan_sla, vía Prioridad.planSlaId).
+    const baja = await obtenerPrioridadPorNombre("Baja");
     const put = await request(app)
-      .put(`${API}/sla/config`)
+      .patch(`${API}/sla/planes/${baja.planSlaId}`)
       .set("Authorization", admin.auth)
-      .send({ configs: [{ prioridad: "baja", pausarEnEsperaCliente: false }] });
+      .send({ pausarEnEsperaCliente: false });
     expect(put.status).toBe(200);
 
-    const t = await crearTicketApi(admin.auth, { prioridad: "baja" });
+    const t = await crearTicketApi(admin.auth, { prioridadId: baja.id });
     await request(app).post(`${API}/tickets/${t.id}/tomar`).set("Authorization", admin.auth);
 
-    await cambiarEstado(admin.auth, t.id, "esperando_cliente");
+    await cambiarEstado(admin.auth, t.id, "Esperando cliente");
 
     const pausas = await AppDataSource.query(`SELECT 1 AS x FROM sla_pausa WHERE entidad_tipo = 'ticket' AND entidad_id = @0`, [t.id]);
     expect(pausas).toHaveLength(0);
@@ -163,7 +173,8 @@ describe("Pausa del SLA en esperando_cliente (Fase 4, solo tickets)", () => {
 
   it("la fase de sla_estado pasa de respuesta a resolución al fijarse primera_respuesta_en", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_fase");
-    const t = await crearTicketApi(admin.auth, { prioridad: "media" });
+    const media = await obtenerPrioridadPorNombre("Media");
+    const t = await crearTicketApi(admin.auth, { prioridadId: media.id });
     await request(app).post(`${API}/tickets/${t.id}/tomar`).set("Authorization", admin.auth);
 
     const antes = await detalleTicket(admin.auth, t.id);

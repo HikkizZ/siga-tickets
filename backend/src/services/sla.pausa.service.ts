@@ -1,21 +1,22 @@
 import { IsNull } from "typeorm";
-import { SlaConfig } from "../entities/SlaConfig.js";
+import { Prioridad } from "../entities/Prioridad.js";
 import { SlaPausa } from "../entities/SlaPausa.js";
 import { Ticket } from "../entities/Ticket.js";
 import { EntidadAsignable } from "../entities/enums.js";
 import { cargarCalendarioYFeriados, correrVencimientoPorPausa } from "./sla.calculo.service.js";
 import type { ManagerTransaccional } from "./folio.service.js";
 
-// Pausa del SLA en POST /tickets/:id/estado (Fase 4, sección "Pausa del SLA" del encargo). Solo
-// tickets: la OT no tiene un estado equivalente a "esperando_cliente". Debe llamarse dentro de la
-// MISMA transacción que ya cambia el estado del ticket (cambiarEstadoTicket en ticket.service.ts).
+// Pausa del SLA en POST /tickets/:id/estado (Fase 4, sección "Pausa del SLA" del encargo; el
+// estado que dispara la pausa es el que tenga esPausaSla=true en estado_ticket, ver ticket.service.ts
+// ::cambiarEstadoTicket). Solo tickets: la OT no tiene un estado equivalente. Debe llamarse dentro
+// de la MISMA transacción que ya cambia el estado del ticket.
 
-// Al ENTRAR a esperando_cliente: abre sla_pausa (desde=ahora) solo si sla_config[prioridad]
-// .pausarEnEsperaCliente es true, y fija ticket.slaPausadoDesde. Muta `ticket` en memoria; el
-// llamador es quien hace el m.save(Ticket, ticket) final.
+// Al ENTRAR al estado de pausa: abre sla_pausa (desde=ahora) solo si la prioridad tiene un plan SLA
+// asignado con pausarEnEsperaCliente=true, y fija ticket.slaPausadoDesde. Sin plan, no hay SLA que
+// pausar. Muta `ticket` en memoria; el llamador es quien hace el m.save(Ticket, ticket) final.
 export async function abrirPausaSiCorresponde(manager: ManagerTransaccional, ticket: Ticket, ahora: Date): Promise<void> {
-  const cfg = await manager.findOne(SlaConfig, { where: { prioridad: ticket.prioridad } });
-  if (!cfg?.pausarEnEsperaCliente) return;
+  const prioridad = await manager.findOne(Prioridad, { where: { id: ticket.prioridadId }, relations: { planSla: true } });
+  if (!prioridad?.planSla?.pausarEnEsperaCliente) return;
   await manager.insert(SlaPausa, {
     entidadTipo: EntidadAsignable.TICKET,
     entidadId: ticket.id,

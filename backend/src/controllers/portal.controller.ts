@@ -38,7 +38,7 @@ export async function crearTicketPublicoController(req: Request, res: Response):
     empresa: body.empresa,
     asunto: body.asunto,
     descripcion: body.descripcion,
-    prioridad: body.prioridad,
+    prioridadId: body.prioridadId,
     archivos: archivosDe(req),
   });
   res.status(201).json({ status: "ok", data });

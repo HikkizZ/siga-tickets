@@ -1,6 +1,7 @@
 import { Adjunto } from "./Adjunto.js";
 import { Asignacion } from "./Asignacion.js";
 import { CalendarioLaboral } from "./CalendarioLaboral.js";
+import { CanalTicket } from "./CanalTicket.js";
 import { Cliente } from "./Cliente.js";
 import { ComentarioOt } from "./ComentarioOt.js";
 import { ConfiguracionCorreo } from "./ConfiguracionCorreo.js";
@@ -9,6 +10,7 @@ import { CorreoSaliente } from "./CorreoSaliente.js";
 import { Cotizacion } from "./Cotizacion.js";
 import { CuentaPortal } from "./CuentaPortal.js";
 import { Departamento } from "./Departamento.js";
+import { EstadoTicket } from "./EstadoTicket.js";
 import { EtapaOt } from "./EtapaOt.js";
 import { Evento } from "./Evento.js";
 import { Feriado } from "./Feriado.js";
@@ -21,7 +23,7 @@ import { Ot } from "./Ot.js";
 import { OtColaborador } from "./OtColaborador.js";
 import { PlanSla } from "./PlanSla.js";
 import { PlantillaCorreo } from "./PlantillaCorreo.js";
-import { SlaConfig } from "./SlaConfig.js";
+import { Prioridad } from "./Prioridad.js";
 import { SlaPausa } from "./SlaPausa.js";
 import { TemaAyuda } from "./TemaAyuda.js";
 import { Ticket } from "./Ticket.js";
@@ -32,6 +34,7 @@ export const entidades = [
   Adjunto,
   Asignacion,
   CalendarioLaboral,
+  CanalTicket,
   Cliente,
   ComentarioOt,
   ConfiguracionCorreo,
@@ -40,6 +43,7 @@ export const entidades = [
   Cotizacion,
   CuentaPortal,
   Departamento,
+  EstadoTicket,
   EtapaOt,
   Evento,
   Feriado,
@@ -52,7 +56,7 @@ export const entidades = [
   OtColaborador,
   PlanSla,
   PlantillaCorreo,
-  SlaConfig,
+  Prioridad,
   SlaPausa,
   TemaAyuda,
   Ticket,

@@ -1,34 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { AppDataSource } from "../config/dataSource.js";
+import { CanalTicket } from "../entities/CanalTicket.js";
 import { Ot } from "../entities/Ot.js";
 import { TicketOt } from "../entities/TicketOt.js";
-import { CanalTicket, CategoriaOt, EstadoOt, OrigenOt, type Prioridad } from "../entities/enums.js";
+import { CategoriaOt, EstadoOt } from "../entities/enums.js";
 import { AppError } from "../errors/AppError.js";
 import { violacionUnica } from "../errors/dbErrors.js";
 import { exigirConversion } from "../policies/ticket.policy.js";
 import { problemasConsistenciaInterna } from "../validations/ot.validation.js";
 import { registrarEventoOt, registrarEventoTicket } from "./evento.service.js";
-import { enTransaccion, siguienteFolio } from "./folio.service.js";
+import { enTransaccion, siguienteFolio, type ManagerTransaccional } from "./folio.service.js";
 import { ahoraDb, otNoEncontrada, type UsuarioActor } from "./ot.common.js";
 import { obtenerDetalleOt } from "./ot.service.js";
+import { exigirPrioridadActiva } from "./prioridad.service.js";
 import { calcularVencimientoOt } from "./sla.calculo.service.js";
 import { bloquearTicket } from "./ticket.common.js";
 import { exigirClienteActivoTicket, obtenerDetalleTicket } from "./ticket.service.js";
 
-// El canal del ticket fija el origen de la OT (no editable en el body).
-const ORIGEN_POR_CANAL: Record<CanalTicket, OrigenOt> = {
-  [CanalTicket.PORTAL]: OrigenOt.MESA_AYUDA,
-  [CanalTicket.CORREO]: OrigenOt.CORREO,
-  [CanalTicket.TELEFONO]: OrigenOt.TELEFONO,
-  [CanalTicket.PRESENCIAL]: OrigenOt.PRESENCIAL,
-  [CanalTicket.INTERNO]: OrigenOt.INTERNA,
-};
+// Fase C: el canal del ticket ahora es una fila de canal_ticket, con su origenOtEquivalente ya
+// resuelto en la propia fila (ver entities/CanalTicket.ts) — reemplaza el Record<CanalTicket,
+// OrigenOt> exhaustivo que había aquí, que ya no puede ser exhaustivo en tiempo de compilación con
+// un catálogo abierto.
+async function origenDesdeCanal(manager: ManagerTransaccional, canalId: string): Promise<Ot["origen"]> {
+  const canal = await manager.findOneByOrFail(CanalTicket, { id: canalId });
+  return canal.origenOtEquivalente;
+}
 
 export interface ConvertirATicketOtInput {
   titulo?: string | undefined;
   descripcion?: string | undefined;
   categoria: CategoriaOt;
-  prioridad?: Prioridad | undefined;
+  prioridadId?: string | undefined;
   ubicacion?: string | undefined;
   fechaEstimadaTermino?: string | undefined;
   clienteId?: string | undefined;
@@ -61,15 +63,16 @@ export async function convertirATicketOt(actor: UsuarioActor, ticketId: string, 
     if (clienteId) await exigirClienteActivoTicket(m, clienteId);
 
     const numero = await siguienteFolio(m, "OT");
-    const origen = ORIGEN_POR_CANAL[ticket.canal];
-    const prioridad = input.prioridad ?? ticket.prioridad;
+    const origen = await origenDesdeCanal(m, ticket.canalId);
+    const prioridadId = input.prioridadId ?? ticket.prioridadId;
+    if (input.prioridadId) await exigirPrioridadActiva(m, input.prioridadId);
 
     // La OT nacida de una conversión tiene SU PROPIO reloj de SLA: fecha_ingreso = ahora (no la
     // del ticket) y su propio vencimiento de resolución (el ticket seguía teniendo el suyo, de
     // "contestar al cliente"; son dos cosas distintas). Mismo motivo que crearOt en ot.service.ts
     // para fijar fechaIngreso explícita antes del INSERT en vez del DEFAULT de la columna.
     const fechaIngresoOt = await ahoraDb(m);
-    const slaResolucionVenceEn = await calcularVencimientoOt(m, prioridad, fechaIngresoOt);
+    const slaResolucionVenceEn = await calcularVencimientoOt(m, prioridadId, fechaIngresoOt);
 
     const ot = await m.save(
       Ot,
@@ -82,7 +85,7 @@ export async function convertirATicketOt(actor: UsuarioActor, ticketId: string, 
         clienteId: esInterna ? null : clienteId,
         areaInterna: esInterna ? (input.areaInterna ?? null) : null,
         categoria: input.categoria,
-        prioridad,
+        prioridadId,
         origen,
         ubicacion: input.ubicacion ?? null,
         solicitanteNombre: ticket.solicitanteNombre ?? null,

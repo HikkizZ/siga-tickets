@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { Rol } from "../entities/enums.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API, crearClienteTest, crearOtApi, crearSesionNombrada } from "../test/otHelpers.js";
 import { crearTicketApi } from "../test/ticketHelpers.js";
 
@@ -148,10 +148,15 @@ describe("GET /notificaciones/resumen", () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_resumen");
     const cliente = await crearClienteTest();
 
-    const otAlta = await crearOtApi(admin.auth, cliente.id, { prioridad: "alta" });
-    const otCotizacion = await crearOtApi(admin.auth, cliente.id, { prioridad: "baja" });
+    const [alta, baja, media] = await Promise.all([
+      obtenerPrioridadPorNombre("Alta"),
+      obtenerPrioridadPorNombre("Baja"),
+      obtenerPrioridadPorNombre("Media"),
+    ]);
+    const otAlta = await crearOtApi(admin.auth, cliente.id, { prioridadId: alta.id });
+    const otCotizacion = await crearOtApi(admin.auth, cliente.id, { prioridadId: baja.id });
     await request(app).post(`${API}/ots/${otCotizacion.id}/estado`).set("Authorization", admin.auth).send({ estado: "en_cotizacion" });
-    await crearTicketApi(admin.auth, { prioridad: "media" });
+    await crearTicketApi(admin.auth, { prioridadId: media.id });
 
     const res = await request(app).get(`${API}/notificaciones/resumen`).set("Authorization", admin.auth);
 

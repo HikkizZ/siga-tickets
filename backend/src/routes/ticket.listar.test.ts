@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { Rol } from "../entities/enums.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerCanalTicketPorNombre, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API, crearSesionNombrada } from "../test/otHelpers.js";
 import { crearTicketApi } from "../test/ticketHelpers.js";
 
@@ -26,14 +26,22 @@ describe("GET /tickets", () => {
 
   it("filtra por estado, prioridad, canal", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_filtros");
-    await crearTicketApi(admin.auth, { prioridad: "alta", canal: "presencial" });
-    await crearTicketApi(admin.auth, { prioridad: "baja", canal: "telefono" });
+    const [alta, baja, presencial, telefono] = await Promise.all([
+      obtenerPrioridadPorNombre("Alta"),
+      obtenerPrioridadPorNombre("Baja"),
+      obtenerCanalTicketPorNombre("Presencial"),
+      obtenerCanalTicketPorNombre("Teléfono"),
+    ]);
+    await crearTicketApi(admin.auth, { prioridadId: alta.id, canalId: presencial.id });
+    await crearTicketApi(admin.auth, { prioridadId: baja.id, canalId: telefono.id });
 
-    const res = await request(app).get(`${API}/tickets?prioridad=alta&canal=presencial`).set("Authorization", admin.auth);
+    const res = await request(app)
+      .get(`${API}/tickets?prioridadId=${alta.id}&canalId=${presencial.id}`)
+      .set("Authorization", admin.auth);
 
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
-    expect(res.body.data[0].prioridad).toBe("alta");
+    expect(res.body.data[0].prioridad).toEqual({ id: alta.id, nombre: "Alta" });
   });
 
   it("sinAsignar y mios filtran por responsable", async () => {

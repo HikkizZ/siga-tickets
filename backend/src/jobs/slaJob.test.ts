@@ -5,7 +5,7 @@ import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { Rol } from "../entities/enums.js";
 import { sumarHorasHabiles, ZONA_HORARIA_SLA } from "../sla/horasHabiles.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerEstadoTicketPorNombre, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API, crearClienteTest, crearOtApi, crearSesionNombrada } from "../test/otHelpers.js";
 import { calendarioYFeriadosReales } from "../test/slaHelpers.js";
 import { crearTicketApi } from "../test/ticketHelpers.js";
@@ -39,7 +39,8 @@ describe("evaluarSla (jobs/slaJob.ts)", () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_job1");
     const cliente = await crearClienteTest();
     // Alta: 24h resolución, umbral 20% => por_vencer con menos de 4.8h hábiles restantes.
-    const ot = await crearOtApi(admin.auth, cliente.id, { prioridad: "alta", responsableId: admin.usuario.id });
+    const alta = await obtenerPrioridadPorNombre("Alta");
+    const ot = await crearOtApi(admin.auth, cliente.id, { prioridadId: alta.id, responsableId: admin.usuario.id });
 
     // Recién creada: bastante más de 4.8h hábiles por delante (~24h) -> sigue en_plazo.
     await evaluarSla();
@@ -77,7 +78,8 @@ describe("evaluarSla (jobs/slaJob.ts)", () => {
   it("una entidad en estado terminal nunca se toca, aunque su vencimiento ya haya pasado", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_job2");
     const cliente = await crearClienteTest();
-    const ot = await crearOtApi(admin.auth, cliente.id, { prioridad: "alta", responsableId: admin.usuario.id });
+    const alta = await obtenerPrioridadPorNombre("Alta");
+    const ot = await crearOtApi(admin.auth, cliente.id, { prioridadId: alta.id, responsableId: admin.usuario.id });
     await request(app).post(`${API}/ots/${ot.id}/estado`).set("Authorization", admin.auth).send({ estado: "terminado" });
 
     await AppDataSource.query(`UPDATE ot SET sla_resolucion_vence_en = @0 WHERE id = @1`, [HACE_MUCHO.toISOString(), ot.id]);
@@ -90,9 +92,11 @@ describe("evaluarSla (jobs/slaJob.ts)", () => {
 
   it("un ticket pausado (esperando_cliente) no se evalúa: la pausa también congela el estado", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_job3");
-    const t = await crearTicketApi(admin.auth, { prioridad: "alta" });
+    const alta = await obtenerPrioridadPorNombre("Alta");
+    const t = await crearTicketApi(admin.auth, { prioridadId: alta.id });
     await request(app).post(`${API}/tickets/${t.id}/tomar`).set("Authorization", admin.auth);
-    await request(app).post(`${API}/tickets/${t.id}/estado`).set("Authorization", admin.auth).send({ estado: "esperando_cliente" });
+    const esperandoCliente = await obtenerEstadoTicketPorNombre("Esperando cliente");
+    await request(app).post(`${API}/tickets/${t.id}/estado`).set("Authorization", admin.auth).send({ estadoId: esperandoCliente.id });
 
     await AppDataSource.query(`UPDATE ticket SET sla_respuesta_vence_en = @0 WHERE id = @1`, [HACE_MUCHO.toISOString(), t.id]);
     await evaluarSla();
@@ -103,7 +107,8 @@ describe("evaluarSla (jobs/slaJob.ts)", () => {
 
   it("antes de la primera respuesta usa slaRespuestaVenceEn; después, slaResolucionVenceEn", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_job4");
-    const t = await crearTicketApi(admin.auth, { prioridad: "alta" });
+    const alta = await obtenerPrioridadPorNombre("Alta");
+    const t = await crearTicketApi(admin.auth, { prioridadId: alta.id });
     await request(app).post(`${API}/tickets/${t.id}/tomar`).set("Authorization", admin.auth);
 
     // slaRespuestaVenceEn vencido, slaResolucionVenceEn sano: como aún no hay primera respuesta,

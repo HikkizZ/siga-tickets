@@ -4,10 +4,13 @@ import sanitizeHtml from "sanitize-html";
 import { AppDataSource } from "../config/dataSource.js";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
+import { CanalTicket } from "../entities/CanalTicket.js";
 import { CorreoIngerido } from "../entities/CorreoIngerido.js";
+import { EstadoTicket } from "../entities/EstadoTicket.js";
 import { MensajeTicket } from "../entities/MensajeTicket.js";
+import { Prioridad } from "../entities/Prioridad.js";
 import { Ticket } from "../entities/Ticket.js";
-import { CanalTicket, EntidadAdjunto, EstadoCorreoIngerido, EstadoTicket, Prioridad, TipoMensajeTicket } from "../entities/enums.js";
+import { EntidadAdjunto, EstadoCorreoIngerido, TipoMensajeTicket } from "../entities/enums.js";
 import { AppError } from "../errors/AppError.js";
 import { violacionUnica } from "../errors/dbErrors.js";
 import type { CorreoEntrante } from "../mail/ingest/MailboxSource.js";
@@ -191,9 +194,16 @@ async function crearTicketDesdeCorreo(manager: ManagerTransaccional, correo: Cor
   // fechaIngreso = cuándo llegó el correo al buzón (no cuándo el job lo procesó): un reprocesamiento
   // manual horas después de un error no debe "reiniciar" el reloj de SLA del cliente.
   const fechaIngreso = correo.recibidoEn;
-  // El correo no trae una señal de prioridad: mismo default que el portal público (Fase 5).
-  const prioridad = Prioridad.MEDIA;
-  const { slaResolucionVenceEn, slaRespuestaVenceEn } = await calcularVencimientosTicket(manager, prioridad, fechaIngreso);
+
+  // Fase C: canal/estado ya no son valores de enum; se resuelven por nombre, exactamente los
+  // sembrados por la migración (ver migrations/1790500000000-CatalogosTicketFaseC.ts).
+  const [canal, estadoInicial, prioridad] = await Promise.all([
+    manager.findOneByOrFail(CanalTicket, { nombre: "Correo" }),
+    manager.findOneByOrFail(EstadoTicket, { esEstadoInicial: true }),
+    // El correo no trae una señal de prioridad: mismo default que el portal público (Fase 5).
+    manager.findOneByOrFail(Prioridad, { nombre: "Media" }),
+  ]);
+  const { slaResolucionVenceEn, slaRespuestaVenceEn } = await calcularVencimientosTicket(manager, prioridad.id, fechaIngreso);
 
   await manager.save(
     Ticket,
@@ -207,9 +217,9 @@ async function crearTicketDesdeCorreo(manager: ManagerTransaccional, correo: Cor
       solicitanteTelefono: null,
       solicitanteEmpresa: null,
       clienteId: null,
-      canal: CanalTicket.CORREO,
-      prioridad,
-      estado: EstadoTicket.NUEVO,
+      canalId: canal.id,
+      prioridadId: prioridad.id,
+      estadoId: estadoInicial.id,
       fechaIngreso,
       recepcionadoPorId: sistemaId,
       responsableActualId: null,
@@ -221,7 +231,7 @@ async function crearTicketDesdeCorreo(manager: ManagerTransaccional, correo: Cor
   await registrarEventoTicket(manager, ticketId, sistemaId, {
     tipo: "creado",
     numero,
-    canal: CanalTicket.CORREO,
+    canal: canal.nombre,
     recepcionadoPorId: sistemaId,
     clienteId: null,
   });

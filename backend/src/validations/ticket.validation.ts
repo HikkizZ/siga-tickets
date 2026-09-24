@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CanalTicket, CategoriaOt, EstadoTicket, Prioridad } from "../entities/enums.js";
+import { CategoriaOt } from "../entities/enums.js";
 import { fechaIso } from "./ot.validation.js";
 
 const uuid = (msg = "Id inválido") => z.string().uuid(msg);
@@ -8,12 +8,6 @@ const paramsId = z.object({ id: uuid() });
 const asunto = z.string().trim().min(1, "El asunto es obligatorio").max(200);
 const descripcion = z.string().trim().min(1, "La descripción es obligatoria").max(20000);
 const opcionalTexto = (max: number) => z.string().trim().min(1).max(max);
-
-// Alta interna (POST /tickets): nunca portal ni correo, esos canales son de fases futuras
-// (ingesta de correo y portal público).
-const canalInterno = z.enum(["telefono", "presencial", "interno"], {
-  errorMap: () => ({ message: "canal debe ser telefono, presencial o interno (portal/correo son de fases futuras)" }),
-});
 
 export const crearTicketReq = {
   body: z
@@ -25,8 +19,11 @@ export const crearTicketReq = {
       solicitanteTelefono: opcionalTexto(40).optional(),
       solicitanteEmpresa: opcionalTexto(160).optional(),
       clienteId: uuid("clienteId inválido").optional(),
-      canal: canalInterno,
-      prioridad: z.nativeEnum(Prioridad),
+      // Fase C: ya no es un whitelist fijo de Zod (telefono/presencial/interno): cualquier canal
+      // existente puede llegar aquí, pero el servicio rechaza los que no tengan esManual=true
+      // (Portal y Correo, reservados a sus propios flujos — ver ticket.service.ts::crearTicket).
+      canalId: uuid("canalId inválido"),
+      prioridadId: uuid("prioridadId inválido"),
       // Fase B1, aditivo: sin conexión todavía a SLA ni a ningún comportamiento automático.
       temaAyudaId: uuid("temaAyudaId inválido").optional(),
     })
@@ -39,7 +36,7 @@ export const actualizarTicketReq = {
     .object({
       asunto: asunto.optional(),
       descripcion: descripcion.optional(),
-      prioridad: z.nativeEnum(Prioridad).optional(),
+      prioridadId: uuid("prioridadId inválido").optional(),
     })
     .strict()
     .refine((b) => Object.keys(b).length > 0, { message: "No hay campos para actualizar" }),
@@ -49,7 +46,7 @@ export const ticketIdReq = { params: paramsId };
 
 export const cambiarEstadoTicketReq = {
   params: paramsId,
-  body: z.object({ estado: z.nativeEnum(EstadoTicket) }).strict(),
+  body: z.object({ estadoId: uuid("estadoId inválido") }).strict(),
 };
 
 export const derivarTicketReq = {
@@ -84,7 +81,7 @@ export const convertirATicketOtReq = {
       titulo: z.string().trim().min(1).max(200).optional(),
       descripcion: z.string().trim().min(1).max(20000).optional(),
       categoria: z.nativeEnum(CategoriaOt),
-      prioridad: z.nativeEnum(Prioridad).optional(),
+      prioridadId: uuid("prioridadId inválido").optional(),
       ubicacion: opcionalTexto(200).optional(),
       fechaEstimadaTermino: fechaIso.optional(),
       clienteId: uuid("clienteId inválido").optional(),
@@ -105,9 +102,9 @@ export const desvincularOtReq = { params: z.object({ id: uuid(), otId: uuid("otI
 const booleanoQuery = z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1");
 
 const filtrosTicket = {
-  estado: z.nativeEnum(EstadoTicket).optional(),
-  prioridad: z.nativeEnum(Prioridad).optional(),
-  canal: z.nativeEnum(CanalTicket).optional(),
+  estadoId: uuid("estadoId inválido").optional(),
+  prioridadId: uuid("prioridadId inválido").optional(),
+  canalId: uuid("canalId inválido").optional(),
   responsable: uuid("responsable inválido").optional(),
   mios: booleanoQuery.optional(),
   sinAsignar: booleanoQuery.optional(),

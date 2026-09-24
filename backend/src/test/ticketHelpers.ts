@@ -3,26 +3,37 @@ import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { Cliente } from "../entities/Cliente.js";
 import { Rol } from "../entities/enums.js";
+import { obtenerCanalTicketPorNombre, obtenerPrioridadPorNombre } from "./helpers.js";
 import { API, crearClienteTest, crearSesionNombrada, type Sesion } from "./otHelpers.js";
 
-export const ticketBody = (extra: Record<string, unknown> = {}) => ({
-  asunto: "No enciende el equipo",
-  descripcion: "El PC de recepción no enciende",
-  solicitanteNombre: "Juan Pérez",
-  solicitanteEmail: "juan.perez@test.local",
-  canal: "telefono",
-  prioridad: "media",
-  ...extra,
-});
+// Fase C: canal/prioridad ya no son valores de enum fijos ("telefono"/"media") sino catálogos con
+// uuid; el body por defecto resuelve "Teléfono"/"Media" por nombre (mismas filas sembradas por la
+// migración, ver test/helpers.ts::limpiarBD) para no hardcodear ids que cambian entre tests. Async
+// a diferencia de la Fase B: hace falta consultar la BD para resolver esos ids.
+export async function ticketBody(extra: Record<string, unknown> = {}) {
+  const [canal, prioridad] = await Promise.all([obtenerCanalTicketPorNombre("Teléfono"), obtenerPrioridadPorNombre("Media")]);
+  return {
+    asunto: "No enciende el equipo",
+    descripcion: "El PC de recepción no enciende",
+    solicitanteNombre: "Juan Pérez",
+    solicitanteEmail: "juan.perez@test.local",
+    canalId: canal.id,
+    prioridadId: prioridad.id,
+    ...extra,
+  };
+}
 
 export async function crearTicketApi(auth: string, extra: Record<string, unknown> = {}) {
-  const res = await request(app).post(`${API}/tickets`).set("Authorization", auth).send(ticketBody(extra));
+  const res = await request(app)
+    .post(`${API}/tickets`)
+    .set("Authorization", auth)
+    .send(await ticketBody(extra));
   if (res.status !== 201) throw new Error(`crearTicketApi falló: ${res.status} ${JSON.stringify(res.body)}`);
   return res.body.data as {
     id: string;
     numero: string;
-    estado: string;
-    canal: string;
+    estado: { id: string; nombre: string };
+    canal: { id: string; nombre: string };
     responsable: { id: string } | null;
     recepcionadoPor: { id: string };
   };

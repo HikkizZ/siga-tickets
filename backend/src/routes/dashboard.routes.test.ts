@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { Rol } from "../entities/enums.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API, cotizacionBody, crearClienteTest, crearOtApi, crearSesionNombrada } from "../test/otHelpers.js";
 import { crearTicketApi } from "../test/ticketHelpers.js";
 
@@ -61,13 +61,14 @@ describe("GET /dashboard - OT (foto actual)", () => {
     await crearOtApi(admin.auth, c1.id);
     await crearOtApi(admin.auth, c1.id);
     await crearOtApi(admin.auth, c2.id);
+    const media = await obtenerPrioridadPorNombre("Media");
     await post(admin.auth, "/ots", {
       titulo: "Interna",
       descripcion: "Mantención de red interna",
       esInterna: true,
       areaInterna: "TI",
       categoria: "soporte",
-      prioridad: "media",
+      prioridadId: media.id,
       origen: "interna",
     });
 

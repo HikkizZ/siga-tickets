@@ -2,7 +2,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
-import { conectarBD, crearUsuarioSistemaTest, limpiarBD } from "../test/helpers.js";
+import { conectarBD, crearUsuarioSistemaTest, limpiarBD, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { PORTAL, ticketPublicoBody } from "../test/portalHelpers.js";
 
 beforeAll(conectarBD);
@@ -29,16 +29,20 @@ describe("POST /publico/tickets", () => {
     expect(res.body.data.numero).toMatch(/^TK-\d{4}$/);
 
     const [fila] = await AppDataSource.query(
-      `SELECT canal, estado, responsable_actual_id, prioridad, sla_resolucion_vence_en, sla_respuesta_vence_en,
-              u.username AS recepcionado_por_username
-       FROM ticket t JOIN usuario u ON u.id = t.recepcionado_por_id
+      `SELECT ct.nombre AS canal, e.nombre AS estado, t.responsable_actual_id, p.nombre AS prioridad,
+              t.sla_resolucion_vence_en, t.sla_respuesta_vence_en, u.username AS recepcionado_por_username
+       FROM ticket t
+       JOIN canal_ticket ct ON ct.id = t.canal_id
+       JOIN estado_ticket e ON e.id = t.estado_id
+       JOIN prioridad p ON p.id = t.prioridad_id
+       JOIN usuario u ON u.id = t.recepcionado_por_id
        WHERE t.numero = @0`,
       [res.body.data.numero],
     );
-    expect(fila.canal).toBe("portal");
-    expect(fila.estado).toBe("nuevo");
+    expect(fila.canal).toBe("Portal");
+    expect(fila.estado).toBe("Nuevo");
     expect(fila.responsable_actual_id).toBeNull();
-    expect(fila.prioridad).toBe("media"); // default
+    expect(fila.prioridad).toBe("Media"); // default
     expect(fila.recepcionado_por_username).toBe("sistema");
     expect(fila.sla_resolucion_vence_en).not.toBeNull();
     expect(fila.sla_respuesta_vence_en).not.toBeNull();
@@ -51,10 +55,14 @@ describe("POST /publico/tickets", () => {
   });
 
   it("acepta prioridad y empresa explícitas", async () => {
-    const res = await crear(ticketPublicoBody({ prioridad: "alta", empresa: "Cliente SPA" }));
+    const alta = await obtenerPrioridadPorNombre("Alta");
+    const res = await crear(ticketPublicoBody({ prioridadId: alta.id, empresa: "Cliente SPA" }));
     expect(res.status).toBe(201);
-    const [fila] = await AppDataSource.query(`SELECT prioridad, solicitante_empresa FROM ticket WHERE numero = @0`, [res.body.data.numero]);
-    expect(fila.prioridad).toBe("alta");
+    const [fila] = await AppDataSource.query(
+      `SELECT p.nombre AS prioridad, t.solicitante_empresa FROM ticket t JOIN prioridad p ON p.id = t.prioridad_id WHERE t.numero = @0`,
+      [res.body.data.numero],
+    );
+    expect(fila.prioridad).toBe("Alta");
     expect(fila.solicitante_empresa).toBe("Cliente SPA");
   });
 

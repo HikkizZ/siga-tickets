@@ -109,8 +109,8 @@ Catálogo inspirado en osTicket ("Help Topics"), aditivo: no reemplaza `categori
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|
 | GET | `/temas-ayuda` | lectura | Lista completa, ordenada por `orden` y luego `nombre` |
-| POST | `/temas-ayuda` | admin | Body `{ nombre, activo?, esPublico?, departamentoId?, prioridadSugerida?, orden? }` → `201`. `409 CONFLICT` si el nombre existe |
-| PATCH | `/temas-ayuda/:id` | admin | Body parcial (mismos campos que `POST`; `departamentoId`/`prioridadSugerida` aceptan `null` para desasignar) |
+| POST | `/temas-ayuda` | admin | Body `{ nombre, activo?, esPublico?, departamentoId?, prioridadSugeridaId?, orden? }` → `201`. `409 CONFLICT` si el nombre existe |
+| PATCH | `/temas-ayuda/:id` | admin | Body parcial (mismos campos que `POST`; `departamentoId`/`prioridadSugeridaId` aceptan `null` para desasignar) |
 
 ```
 GET /api/v1/temas-ayuda
@@ -119,12 +119,12 @@ GET /api/v1/temas-ayuda
 { "status": "ok", "data": [{
   "id": "…", "nombre": "Falla de hardware", "activo": true, "esPublico": true,
   "departamento": { "id": "…", "nombre": "Soporte técnico" },
-  "prioridadSugerida": "alta", "orden": 0
+  "prioridadSugerida": { "id": "…", "nombre": "Alta" }, "orden": 0
 }] }
 ```
 
 - `departamentoId`: si viene, debe ser un departamento existente (`400 DEPARTAMENTO_INVALIDO`); no se exige que esté activo (un departamento desactivado después puede seguir siendo la sugerencia por defecto). `departamento` en la respuesta va embebido `{id, nombre}` (cascada de lectura tema→departamento), o `null` si no tiene.
-- `prioridadSugerida` ∈ `alta|media|baja`, opcional.
+- `prioridadSugeridaId`: uuid del catálogo `Prioridad` (Fase C), opcional; si viene, debe existir (`400 PRIORIDAD_INVALIDA`), sin exigir que esté activa (mismo criterio que `departamentoId`). Se expone en la respuesta como `prioridadSugerida: {id, nombre}|null`.
 - `esPublico`: si aparece como opción en el portal público (fase futura) o es solo interno; por defecto `true`.
 - `orden`: entero, por defecto `0`; ordena el listado antes del nombre. Editable en cualquier momento.
 - **Sin ningún comportamiento automático**: elegir un tema no autocompleta prioridad ni departamento en el ticket (decisión de UX que queda para una fase posterior de frontend).
@@ -135,7 +135,7 @@ GET /api/v1/temas-ayuda
 
 ### GET /ots — lista paginada · lectura
 
-Query (todo opcional): `page` (≥1, def. 1), `perPage` (1–100, def. 25), `orden` ∈ `numero | titulo | estado | prioridad | fechaIngreso | fechaEstimadaTermino | creadoEn | actualizadoEn` (def. `fechaIngreso`; otro valor → 400), `dir` = `asc|desc` (def. `desc`), y filtros `estado`, `prioridad`, `categoria`, `clienteId`, `responsableId`, `mios=true` (soy responsable o colaborador), `q` (busca en `numero`, `titulo`, `solicitanteNombre`; `%`, `_` y `[` se toman literalmente), `desde`/`hasta` (`YYYY-MM-DD`, sobre la fecha de ingreso en hora de Chile).
+Query (todo opcional): `page` (≥1, def. 1), `perPage` (1–100, def. 25), `orden` ∈ `numero | titulo | estado | prioridad | fechaIngreso | fechaEstimadaTermino | creadoEn | actualizadoEn` (def. `fechaIngreso`; otro valor → 400), `dir` = `asc|desc` (def. `desc`), y filtros `estado`, `prioridadId` (Fase C: uuid del catálogo Prioridad, ver más abajo), `categoria`, `clienteId`, `responsableId`, `mios=true` (soy responsable o colaborador), `q` (busca en `numero`, `titulo`, `solicitanteNombre`; `%`, `_` y `[` se toman literalmente), `desde`/`hasta` (`YYYY-MM-DD`, sobre la fecha de ingreso en hora de Chile).
 
 ```
 GET /api/v1/ots?estado=en_ejecucion&mios=true&orden=prioridad&dir=asc&page=1&perPage=25
@@ -145,13 +145,13 @@ GET /api/v1/ots?estado=en_ejecucion&mios=true&orden=prioridad&dir=asc&page=1&per
   "data": [{
     "id": "…", "numero": "OT-1041", "titulo": "Mantención de bomba",
     "cliente": { "id": "…", "nombre": "Minera Los Andes" }, "areaInterna": null, "esInterna": false,
-    "categoria": "mantencion", "prioridad": "media", "origen": "telefono", "estado": "ingresado",
+    "categoria": "mantencion", "prioridad": { "id": "…", "nombre": "Media" }, "origen": "telefono", "estado": "ingresado",
     "solicitanteNombre": "Juan Pérez", "responsable": { "id": "…", "nombre": "…" },
     "fechaIngreso": "2026-09-21T14:03:11.123Z", "fechaEstimadaTermino": "2026-10-01", "slaEstado": "en_plazo"
   }],
   "meta": { "page": 1, "perPage": 25, "total": 1 } }
 ```
-(`cliente` es `null` en OT internas; `areaInterna` es `null` en las demás.)
+(`cliente` es `null` en OT internas; `areaInterna` es `null` en las demás. `prioridad` — Fase C — es el catálogo `Prioridad`, ver sección "Catálogos administrables" más abajo.)
 
 ### GET /ots/kanban · lectura
 
@@ -162,7 +162,7 @@ Mismos filtros que el listado (sin paginación ni orden). Devuelve siempre las 6
   { "estado": "ingresado", "total": 1, "ots": [{
       "id": "…", "numero": "OT-1041", "titulo": "…",
       "cliente": { "id": "…", "nombre": "…" }, "areaInterna": null,
-      "prioridad": "media", "responsable": { "id": "…", "nombre": "…" },
+      "prioridad": { "id": "…", "nombre": "Media" }, "responsable": { "id": "…", "nombre": "…" },
       "colaboradores": { "items": [{ "id": "…", "nombre": "…" }], "total": 1 },
       "fechaEstimadaTermino": null, "adjuntosCount": 0, "slaEstado": "en_plazo" }] },
   { "estado": "en_cotizacion", "total": 0, "ots": [] } ] }
@@ -173,11 +173,11 @@ Mismos filtros que el listado (sin paginación ni orden). Devuelve siempre las 6
 
 ```json
 { "titulo": "Mantención de bomba", "descripcion": "Revisar la bomba principal",
-  "clienteId": "…", "categoria": "mantencion", "prioridad": "media", "origen": "telefono",
+  "clienteId": "…", "categoria": "mantencion", "prioridadId": "…", "origen": "telefono",
   "ubicacion": "Planta 2", "solicitanteNombre": "Juan Pérez", "solicitanteContacto": "juan@cliente.cl",
   "fechaEstimadaTermino": "2026-10-01", "responsableId": "…", "colaboradorIds": ["…"] }
 ```
-- `categoria` ∈ `mantencion|instalacion|reparacion|cotizacion|soporte|otro`; `prioridad` ∈ `alta|media|baja`; `origen` ∈ `mesa_ayuda|correo|telefono|presencial|interna`.
+- `categoria` ∈ `mantencion|instalacion|reparacion|cotizacion|soporte|otro`; `prioridadId` = uuid de una fila existente y activa del catálogo `Prioridad` (Fase C, `400 PRIORIDAD_INVALIDA` si no) — compartido con `Ticket`, ver "Catálogos administrables"; `origen` ∈ `mesa_ayuda|correo|telefono|presencial|interna`.
 - OT interna: `"esInterna": true` + `areaInterna` y **sin** `clienteId`. No interna (por defecto): `clienteId` obligatorio (existente y activo) y sin `areaInterna`. Combinación inválida → `400 VALIDATION_ERROR`; cliente inexistente/inactivo → `400 CLIENTE_INVALIDO`.
 - `responsableId` opcional (por defecto, quien crea); debe ser un usuario activo distinto de `sistema` (`400 RESPONSABLE_INVALIDO`). `colaboradorIds` no puede incluir al responsable (`400 COLABORADOR_INVALIDO`).
 - `recepcionadoPorId` **no** se acepta: sale del token.
@@ -191,7 +191,7 @@ Mismos filtros que el listado (sin paginación ni orden). Devuelve siempre las 6
 
 ```json
 { "id": "…", "numero": "OT-1041", "titulo": "…", "descripcion": "…",
-  "estado": "ingresado", "prioridad": "media", "categoria": "mantencion", "origen": "telefono",
+  "estado": "ingresado", "prioridad": { "id": "…", "nombre": "Media" }, "categoria": "mantencion", "origen": "telefono",
   "esInterna": false, "cliente": { "id": "…", "nombre": "…" }, "areaInterna": null,
   "ubicacion": null, "solicitanteNombre": null, "solicitanteContacto": null,
   "fechaIngreso": "…", "fechaEstimadaTermino": null, "terminadoEn": null,
@@ -211,7 +211,7 @@ Mismos filtros que el listado (sin paginación ni orden). Devuelve siempre las 6
   "cotizaciones": [{
     "id": "…", "numero": "COT-2042", "montoClp": 500000, "estado": "enviada",
     "version": 2, "esPrincipal": true, "fecha": "2026-09-21" }],
-  "tickets": [{ "id": "…", "numero": "TK-0001", "asunto": "No enciende el equipo", "estado": "abierto", "canal": "telefono", "esOrigen": true }] }
+  "tickets": [{ "id": "…", "numero": "TK-0001", "asunto": "No enciende el equipo", "estado": { "id": "…", "nombre": "Abierto" }, "canal": { "id": "…", "nombre": "Teléfono" }, "esOrigen": true }] }
 ```
 - `cadenaResponsables`: orden cronológico; el tramo abierto lleva `actual: true`, `hasta: null` y `duracionSeg` = lo transcurrido hasta ahora; el primero tiene `motivoEntrada` y `derivadoPor` en `null`.
 - `eventos`: más recientes primero (timeline).
@@ -221,7 +221,7 @@ Mismos filtros que el listado (sin paginación ni orden). Devuelve siempre las 6
 
 ### PATCH /ots/:id · tecnico (responsable o colaborador)
 
-Body parcial: `titulo, descripcion, categoria, prioridad, ubicacion, solicitanteNombre, solicitanteContacto, fechaEstimadaTermino` (los opcionales aceptan `null`), y `clienteId` (solo OT no interna) o `areaInterna` (solo OT interna). No se pueden cambiar `numero`, `estado`, `responsable`, `recepcionadoPor` (400). Solo los campos que cambian generan evento (`prioridad_cambiada` para la prioridad, `ot_editada` para el resto). → `200 Detalle`.
+Body parcial: `titulo, descripcion, categoria, prioridadId, ubicacion, solicitanteNombre, solicitanteContacto, fechaEstimadaTermino` (los opcionales aceptan `null`), y `clienteId` (solo OT no interna) o `areaInterna` (solo OT interna). No se pueden cambiar `numero`, `estado`, `responsable`, `recepcionadoPor` (400). Solo los campos que cambian generan evento (`prioridad_cambiada` para la prioridad — payload `{de, a}` con los uuid de la fila anterior/nueva desde la Fase C — `ot_editada` para el resto). → `200 Detalle`.
 
 ### POST /ots/:id/estado · tecnico (responsable o colaborador)
 
@@ -343,19 +343,21 @@ Panel interno únicamente (`/api/v1`, JWT). Fuera de alcance: portal público, i
 
 **Sin colaborador**: a diferencia de OT, el esquema no tiene `ticket_colaborador`. Todo lo que en la matriz de la sección 6 del diseño dice "responsable o colaborador" para un ticket es, en la implementación, solo "responsable actual" (ver tabla de permisos por fila más arriba).
 
-`TicketResumen` (forma de `GET /tickets`): `{ id, numero, asunto, canal, prioridad, estado, cliente: {id,nombre}|null, solicitanteNombre, responsable: {id,nombre}|null, fechaIngreso, slaEstado }`.
+`TicketResumen` (forma de `GET /tickets`): `{ id, numero, asunto, canal: {id,nombre}, prioridad: {id,nombre}, estado: {id,nombre}, cliente: {id,nombre}|null, solicitanteNombre, responsable: {id,nombre}|null, fechaIngreso, slaEstado }`.
+
+**Fase C**: `canal`, `prioridad` y `estado` de Ticket (y `prioridad` de OT) dejaron de ser enums fijos con `CHECK` y pasan a catálogos administrables (`Prioridad`, `EstadoTicket`, `CanalTicket`) — ver sección "Catálogos administrables (Fase C)" más abajo para su CRUD y el significado de cada flag. En el body se envían como `*Id` (uuid); en las respuestas se exponen como `{id, nombre}`, igual que `cliente`/`responsable`.
 
 ### GET /tickets — lista paginada · lectura
 
-Query: `page` (≥1, def. 1), `perPage` (1–100, def. 25), `orden` ∈ `numero | asunto | estado | prioridad | fechaIngreso | creadoEn | actualizadoEn` (def. `fechaIngreso`), `dir` = `asc|desc` (def. `desc`), y filtros `estado`, `prioridad`, `canal`, `responsable` (uuid), `mios=true` (soy el responsable actual), `sinAsignar=true` (`responsable_actual_id IS NULL`), `q` (busca en `numero`, `asunto`, `solicitanteNombre`; `%`, `_` y `[` literales, mismo escape que OT), `desde`/`hasta` (`YYYY-MM-DD`, sobre `fechaIngreso` en hora de Chile).
+Query: `page` (≥1, def. 1), `perPage` (1–100, def. 25), `orden` ∈ `numero | asunto | estado | prioridad | fechaIngreso | creadoEn | actualizadoEn` (def. `fechaIngreso`; el orden de `estado`/`prioridad` sigue la columna `orden` de su catálogo, no un valor fijo), `dir` = `asc|desc` (def. `desc`), y filtros `estadoId`, `prioridadId`, `canalId` (uuid de sus catálogos respectivos), `responsable` (uuid), `mios=true` (soy el responsable actual), `sinAsignar=true` (`responsable_actual_id IS NULL`), `q` (busca en `numero`, `asunto`, `solicitanteNombre`; `%`, `_` y `[` literales, mismo escape que OT), `desde`/`hasta` (`YYYY-MM-DD`, sobre `fechaIngreso` en hora de Chile).
 
 ```
-GET /api/v1/tickets?sinAsignar=true&prioridad=alta&orden=fechaIngreso&dir=asc
+GET /api/v1/tickets?sinAsignar=true&prioridadId=…&orden=fechaIngreso&dir=asc
 ```
 ```json
 { "status": "ok",
-  "data": [{ "id": "…", "numero": "TK-0001", "asunto": "No enciende el equipo", "canal": "telefono",
-    "prioridad": "media", "estado": "nuevo", "cliente": null, "solicitanteNombre": "Juan Pérez",
+  "data": [{ "id": "…", "numero": "TK-0001", "asunto": "No enciende el equipo", "canal": { "id": "…", "nombre": "Teléfono" },
+    "prioridad": { "id": "…", "nombre": "Media" }, "estado": { "id": "…", "nombre": "Nuevo" }, "cliente": null, "solicitanteNombre": "Juan Pérez",
     "responsable": null, "fechaIngreso": "…", "slaEstado": "en_plazo" }],
   "meta": { "page": 1, "perPage": 25, "total": 1 } }
 ```
@@ -365,14 +367,14 @@ GET /api/v1/tickets?sinAsignar=true&prioridad=alta&orden=fechaIngreso&dir=asc
 ```json
 { "asunto": "No enciende el equipo", "descripcion": "El PC de recepción no enciende",
   "solicitanteNombre": "Juan Pérez", "solicitanteEmail": "juan@cliente.cl", "solicitanteTelefono": "+56...",
-  "solicitanteEmpresa": "…", "clienteId": "…", "canal": "telefono", "prioridad": "media",
+  "solicitanteEmpresa": "…", "clienteId": "…", "canalId": "…", "prioridadId": "…",
   "temaAyudaId": "…" }
 ```
-- `canal` ∈ `telefono|presencial|interno` **solamente** (`portal`/`correo` son de fases futuras: el portal público y la ingesta de correo crean tickets por otro camino) → si no, `400 VALIDATION_ERROR`.
+- `canalId` = uuid de una fila **existente, activa y con `esManual: true`** del catálogo `CanalTicket` (Fase C) → si no, `400 CANAL_INVALIDO` (Portal y Correo tienen `esManual: false`: quedan reservados a sus propios flujos, el portal público y la ingesta de correo). `prioridadId` = uuid de una prioridad existente y activa (`400 PRIORIDAD_INVALIDA` si no).
 - `recepcionadoPorId` **no** se acepta: sale del token (`400` si se envía, `.strict()`).
 - `clienteId` opcional; si viene, debe ser un cliente existente y activo (`400 CLIENTE_INVALIDO`).
 - `temaAyudaId` opcional (Fase B1); si viene, debe ser un tema de ayuda existente y activo (`400 TEMA_AYUDA_INVALIDO`). Solo se guarda: sin ningún efecto automático sobre prioridad, SLA ni `categoria`. No editable por `PATCH /tickets/:id` en esta fase.
-- Nace **sin responsable** (`responsable: null`) y en estado `nuevo`: alguien lo debe tomar (`POST /tickets/:id/tomar`), incluido quien lo creó si quiere.
+- Nace **sin responsable** (`responsable: null`) y en el estado con `esEstadoInicial: true` del catálogo (sembrado como "Nuevo"): alguien lo debe tomar (`POST /tickets/:id/tomar`), incluido quien lo creó si quiere.
 - Folio `TK-xxxx` consecutivo sin huecos; evento `creado`.
 
 → `201 { data: <Detalle> }`.
@@ -385,7 +387,7 @@ GET /api/v1/tickets?sinAsignar=true&prioridad=alta&orden=fechaIngreso&dir=asc
 { "id": "…", "numero": "TK-0001", "asunto": "…", "descripcion": "…",
   "solicitanteNombre": "…", "solicitanteEmail": "…", "solicitanteTelefono": null, "solicitanteEmpresa": null,
   "cliente": null, "temaAyuda": { "id": "…", "nombre": "Falla de hardware" },
-  "canal": "telefono", "prioridad": "media", "estado": "abierto",
+  "canal": { "id": "…", "nombre": "Teléfono" }, "prioridad": { "id": "…", "nombre": "Media" }, "estado": { "id": "…", "nombre": "Abierto" },
   "fechaIngreso": "…", "recepcionadoPor": { "id": "…", "nombre": "…" },
   "responsable": { "id": "…", "nombre": "…" },
   "primeraRespuestaEn": "…|null", "resueltoEn": null, "cerradoEn": null,
@@ -410,11 +412,11 @@ GET /api/v1/tickets?sinAsignar=true&prioridad=alta&orden=fechaIngreso&dir=asc
 
 ### PATCH /tickets/:id · tecnico (solo responsable actual)
 
-Body parcial: `asunto?, descripcion?, prioridad?`. Nunca `numero`, `estado`, `canal`, `recepcionadoPor`, `responsable` (`.strict()` los rechaza con `400`). Solo los campos que cambian generan evento (`prioridad_cambiada` para la prioridad, `ticket_editado` para el resto). → `200 Detalle`.
+Body parcial: `asunto?, descripcion?, prioridadId?`. Nunca `numero`, `estado`, `canal`, `recepcionadoPor`, `responsable` (`.strict()` los rechaza con `400`). Solo los campos que cambian generan evento (`prioridad_cambiada` con `{de,a}` = uuid de la prioridad anterior/nueva, `ticket_editado` para el resto). → `200 Detalle`.
 
 ### POST /tickets/:id/estado · tecnico (solo responsable actual)
 
-Único camino para cambiar el estado. Body `{ "estado": "resuelto" }`, cualquiera de `nuevo|abierto|esperando_cliente|resuelto|cerrado` distinto del actual (sin máquina de transiciones estricta todavía). Mismo estado → `409 ESTADO_SIN_CAMBIO`. `resueltoEn`/`cerradoEn` se fijan la primera vez que se llega a `resuelto`/`cerrado` y no se borran si el ticket se reabre manualmente. Evento `estado_cambiado`. → `200 Detalle`.
+Único camino para cambiar el estado. Body `{ "estadoId": "…" }`, uuid de cualquier fila **activa** de `EstadoTicket` distinta de la actual (sin máquina de transiciones estricta todavía: el admin puede crear más estados desde el catálogo, ver más abajo). Mismo estado → `409 ESTADO_SIN_CAMBIO`; `estadoId` inexistente/inactivo → `400 ESTADO_TICKET_INVALIDO`. `resueltoEn`/`cerradoEn` se fijan la primera vez que se entra a un estado con `marcaResueltoEn`/`marcaCerradoEn` y no se borran si el ticket se reabre manualmente. Entrar/salir de un estado con `esPausaSla: true` abre/cierra la pausa del SLA (ver "SLA y notificaciones"). Evento `estado_cambiado` con `{de,a}` = **nombres** de los estados (no el uuid, por legibilidad del timeline). → `200 Detalle`.
 
 ### POST /tickets/:id/tomar · tecnico
 
@@ -445,11 +447,11 @@ Igual que `POST /ots/:id/derivar`, pero **sin** `mantenerComoColaborador` (el ti
 "Herencia completa" del ticket hacia una OT nueva:
 
 ```json
-{ "titulo": "…", "descripcion": "…", "categoria": "soporte", "prioridad": "alta",
+{ "titulo": "…", "descripcion": "…", "categoria": "soporte", "prioridadId": "…",
   "ubicacion": "…", "fechaEstimadaTermino": "2026-10-01", "clienteId": "…", "areaInterna": "…", "esInterna": false }
 ```
-- `categoria` es obligatorio; el resto opcional. `titulo`/`descripcion` por defecto vienen de `asunto`/`descripcion` del ticket; `prioridad` por defecto la del ticket.
-- `origen` de la OT se deriva del `canal` del ticket, **no editable**: `portal→mesa_ayuda`, `correo→correo`, `telefono→telefono`, `presencial→presencial`, `interno→interna`.
+- `categoria` es obligatorio; el resto opcional. `titulo`/`descripcion` por defecto vienen de `asunto`/`descripcion` del ticket; `prioridadId` por defecto la del ticket (si se envía, debe ser una prioridad existente y activa, `400 PRIORIDAD_INVALIDA`).
+- `origen` de la OT se deriva del `origenOtEquivalente` del canal del ticket (Fase C, catálogo `CanalTicket`), **no editable**: los 5 canales sembrados mapean igual que antes (`Portal→mesa_ayuda`, `Correo→correo`, `Teléfono→telefono`, `Presencial→presencial`, `Interno→interna`); un canal nuevo que cree el admin lleva su propio `origenOtEquivalente` explícito.
 - `clienteId`: si no viene y el ticket tiene cliente, se hereda; si el ticket no tiene cliente y no se indica `esInterna`, `400 CLIENTE_INVALIDO`. Consistencia `esInterna`/`clienteId`/`areaInterna` reutiliza el mismo chequeo que `POST /ots` (`400 VALIDATION_ERROR` con el mismo mensaje si es inconsistente).
 - `solicitanteNombre`/`solicitanteContacto` de la OT se completan desde el solicitante del ticket (email o teléfono).
 - `recepcionadoPor` de la OT = quien **recibió el ticket originalmente** (nunca quien ejecuta la conversión).
@@ -497,24 +499,11 @@ Stream autenticado (el frontend debe pedirlo con el token, p. ej. `fetch` + `blo
 
 ---
 
-## SLA y notificaciones (Fase 4)
+## SLA y notificaciones (Fase 4, consolidado en Fase C)
 
-El vencimiento de SLA (`slaResolucionVenceEn` en OT; `slaResolucionVenceEn`/`slaRespuestaVenceEn` en ticket) se calcula al crear la entidad y se recalcula al cambiar la prioridad (siempre desde `fechaIngreso`, nunca desde "ahora"), al editar `sla_config` (en lote, solo lo abierto de esa prioridad) y al cerrar una pausa de SLA. `sla_estado` (`en_plazo|por_vencer|vencida`) lo actualiza el worker cada 5 min (`jobs/slaJob.ts::evaluarSla`, programado con `node-cron` en `api/worker.ts`; también corre una vez al arrancar el proceso), nunca las escrituras directas. Detalle completo del diseño, desviaciones y ejemplos de `sumarHorasHabiles` en `backend-diseno.md` sección 3.
+El vencimiento de SLA (`slaResolucionVenceEn` en OT; `slaResolucionVenceEn`/`slaRespuestaVenceEn` en ticket) se calcula al crear la entidad y se recalcula al cambiar la prioridad (siempre desde `fechaIngreso`, nunca desde "ahora"), al editar el `PlanSla` de una prioridad o reasignarle otro (en lote, solo lo abierto de esa prioridad) y al cerrar una pausa de SLA. `sla_estado` (`en_plazo|por_vencer|vencida`) lo actualiza el worker cada 5 min (`jobs/slaJob.ts::evaluarSla`, programado con `node-cron` en `api/worker.ts`; también corre una vez al arrancar el proceso), nunca las escrituras directas. Detalle completo del diseño, desviaciones y ejemplos de `sumarHorasHabiles` en `backend-diseno.md` sección 3.
 
-### GET /sla/config · lectura
-
-`200 { data: [{ prioridad, horasResolucion, horasPrimeraRespuesta, usarHorasHabiles, pausarEnEsperaCliente, umbralPorVencer }] }` (las 3 filas, `alta|media|baja`).
-
-### PUT /sla/config · admin
-
-```json
-{ "configs": [
-  { "prioridad": "alta", "horasResolucion": 24, "horasPrimeraRespuesta": 2, "usarHorasHabiles": true, "pausarEnEsperaCliente": true, "umbralPorVencer": 0.2 }
-] }
-```
-- `configs`: 1 a 3 filas, sin repetir `prioridad`; todos los campos de cada fila son opcionales salvo `prioridad` (solo se actualiza lo enviado). `horasResolucion`/`horasPrimeraRespuesta`: entero > 0. `umbralPorVencer`: decimal en (0, 1]. Fuera de rango → `400 VALIDATION_ERROR`. `500`/defensivo interno: `400 SLA_CONFIG_INVALIDO` si la prioridad no tiene fila (no debería ocurrir: la semilla siembra las 3 y Zod ya restringe el enum).
-- Por cada prioridad editada, recalcula en la MISMA transacción el vencimiento de toda OT/ticket **abierto** (no terminal) de esa prioridad, desde su propia `fechaIngreso`.
-- → `200 { data: [...] }` (mismo formato que el GET, con los 3 valores ya actualizados).
+**Fase C — consolidación de SLA**: `sla_config` (3 filas fijas por prioridad, antes el único sistema real de cálculo) se retiró por completo, junto con `GET`/`PUT /sla/config`. `PlanSla` (Fase B2, hasta entonces un catálogo sin conexión real) pasa a ser el único sistema real de SLA, referenciado desde `Prioridad.planSlaId` (ver "Catálogos administrables" más abajo). Una prioridad sin plan asignado (`planSlaId: null`) simplemente no tiene SLA: sus vencimientos quedan `null`.
 
 ### GET /sla/feriados · lectura
 
@@ -530,11 +519,11 @@ Body `{ "fecha": "2026-09-18", "nombre": "Fiestas Patrias", "irrenunciable": tru
 
 ---
 
-## Planes SLA (Fase B2)
+## Planes SLA (Fase B2, único sistema real de SLA desde la Fase C)
 
-Catálogo administrable por un admin de Planes SLA **con nombre propio** (tabla `plan_sla`), distinto de `sla_config` (que son 3 filas fijas por prioridad, sección anterior). Mismos 5 campos de configuración que `sla_config`, pero acá puede haber muchos planes, cada uno activable/desactivable con `activo`.
+Catálogo administrable por un admin de Planes SLA **con nombre propio** (tabla `plan_sla`). Puede haber muchos planes, cada uno activable/desactivable con `activo`.
 
-**Alcance deliberadamente acotado**: por ahora esto es solo un catálogo CRUD. Ningún cálculo real de SLA de OT/ticket lo usa todavía — `sla_config` sigue siendo la única fuente real del cálculo de vencimiento — y no existe ninguna relación desde OT/Ticket hacia `plan_sla`. Conectarlos es una decisión de una fase posterior.
+**Fase C**: `Prioridad.planSlaId` (ver "Catálogos administrables" más abajo) conecta cada prioridad a un plan de aquí — este catálogo pasa a ser el único sistema real de cálculo de SLA (el extinto `sla_config` era el único hasta esta fase).
 
 `PlanSla`: `{ id, nombre, activo, horasResolucion, horasPrimeraRespuesta, usarHorasHabiles, pausarEnEsperaCliente, umbralPorVencer, creadoEn, actualizadoEn }`.
 
@@ -548,15 +537,53 @@ Catálogo administrable por un admin de Planes SLA **con nombre propio** (tabla 
 { "nombre": "Premium 4h", "horasResolucion": 4, "horasPrimeraRespuesta": 1,
   "usarHorasHabiles": true, "pausarEnEsperaCliente": true, "umbralPorVencer": 0.2 }
 ```
-Todos los campos de configuración son opcionales salvo `nombre`, `horasResolucion` y `horasPrimeraRespuesta` (mismas validaciones que `PUT /sla/config`: horas entero > 0, `umbralPorVencer` en (0,1]). `activo` opcional, por defecto `true`. Nombre duplicado → `409 CONFLICT`. → `201 { data: PlanSla }`.
+Todos los campos de configuración son opcionales salvo `nombre`, `horasResolucion` y `horasPrimeraRespuesta` (horas entero > 0, `umbralPorVencer` en (0,1]). `activo` opcional, por defecto `true`. Nombre duplicado → `409 CONFLICT`. → `201 { data: PlanSla }`.
 
 ### PATCH /sla/planes/:id · admin
 
-Body parcial (cualquier campo de `PlanSla` salvo `id`/`creadoEn`/`actualizadoEn`, incluido `nombre` y `activo`). Sin campos → `400 VALIDATION_ERROR`. Nombre duplicado → `409 CONFLICT`. Id inexistente → `404 NOT_FOUND`. → `200 { data: PlanSla }`.
+Body parcial (cualquier campo de `PlanSla` salvo `id`/`creadoEn`/`actualizadoEn`, incluido `nombre` y `activo`). Sin campos → `400 VALIDATION_ERROR`. Nombre duplicado → `409 CONFLICT`. Id inexistente → `404 NOT_FOUND`. Si cambian las horas/umbral, recalcula en la misma transacción lo abierto de cualquier prioridad que use este plan. → `200 { data: PlanSla }`.
 
 ### DELETE /sla/planes/:id · admin
 
-A diferencia de Departamentos/Temas de ayuda, un Plan SLA **sí se borra de verdad**: hoy no hay ninguna FK que apunte a `plan_sla`. Id inexistente → `404 NOT_FOUND`. → `200 { data: null }`.
+A diferencia de Departamentos/Temas de ayuda, un Plan SLA **sí se borra de verdad**. Fase C: si alguna `Prioridad` apuntaba a este plan, su FK cae a `NULL` (`ON DELETE SET NULL`) y se recalcula lo abierto de esa prioridad como "sin SLA" (vencimientos `NULL`). Id inexistente → `404 NOT_FOUND`. → `200 { data: null }`.
+
+---
+
+## Catálogos administrables (Fase C)
+
+Prioridad, Estado y Canal/Fuente de Ticket dejan de ser enums fijos con `CHECK` y pasan a catálogos administrables por un admin, con el mismo patrón CRUD que Departamentos/Temas de ayuda (Fase B1): sin `DELETE` real, solo `activo` para activar/desactivar. Lectura para cualquier autenticado; escritura solo `admin`.
+
+### GET/POST/PATCH /prioridades · lectura / admin
+
+Compartido por Ticket y OT (misma tabla `prioridad` referenciada por ambos, igual que antes con el enum). `Prioridad`: `{ id, nombre, orden, activo, planSlaId }`.
+
+```json
+{ "nombre": "Crítica", "orden": 0, "activo": true, "planSlaId": "…|null" }
+```
+- `planSlaId` opcional/nullable: si viene, debe ser un `PlanSla` existente (`400 PLAN_SLA_INVALIDO` si no). `null` (o ausente al crear) = sin SLA.
+- `PATCH` que cambia `planSlaId` (incluido a `null`) recalcula en la misma transacción los vencimientos de lo abierto (OT y ticket) de esa prioridad, mismo mecanismo que `PATCH /sla/planes/:id`.
+- Nombre duplicado → `409 CONFLICT`. Id inexistente → `404 NOT_FOUND`.
+
+### GET/POST/PATCH /estados-ticket · lectura / admin
+
+`EstadoTicket`: `{ id, nombre, orden, activo, esEstadoInicial, esDestinoReapertura, esPausaSla, marcaResueltoEn, marcaCerradoEn, esTerminal }`. Los 5 estados sembrados por la migración (Nuevo/Abierto/Esperando cliente/Resuelto/Cerrado) llevan estos flags con el comportamiento que antes vivía codificado por nombre; un estado nuevo que cree el admin no activa ninguno salvo que se marque explícitamente (por defecto: estado intermedio normal, sin ningún efecto). Ver `docs/backend-diseno.md` sección de esta fase para el significado exacto de cada flag.
+
+```json
+{ "nombre": "En espera de repuesto", "orden": 6 }
+```
+- `esEstadoInicial` y `esDestinoReapertura` son **exclusivos**: como mucho una fila con cada flag en `true`. Marcar una nueva fila (al crear o por `PATCH`) desmarca automáticamente cualquier otra que lo tuviera, en la misma transacción.
+- Nombre duplicado → `409 CONFLICT`. Id inexistente → `404 NOT_FOUND`.
+
+### GET/POST/PATCH /fuentes-ticket · lectura / admin
+
+La URL usa "fuentes" (así lo ve el admin); el nombre en el resto de la API sigue siendo `canal` (`Ticket.canalId`, filtros, etc.). `CanalTicket`: `{ id, nombre, orden, activo, esManual, origenOtEquivalente }`.
+
+```json
+{ "nombre": "Chat", "orden": 6, "esManual": true, "origenOtEquivalente": "mesa_ayuda" }
+```
+- `esManual`: si un humano puede elegir este canal en `POST /tickets` (Portal y Correo vienen con `esManual: false`, reservados a sus propios flujos).
+- `origenOtEquivalente` ∈ `mesa_ayuda|correo|telefono|presencial|interna` (mismo enum fijo `OrigenOt` de OT, sin cambios): a qué origen se traduce este canal al convertir un ticket en OT (ver `POST /tickets/:id/convertir-a-ot`).
+- Nombre duplicado → `409 CONFLICT`. Id inexistente → `404 NOT_FOUND`.
 
 ---
 
@@ -586,9 +613,9 @@ Panorama operativo de **todo el equipo** (no solo lo propio del actor — decisi
 } }
 ```
 - `otVencidas`: `sla_estado='vencida'` y no terminal.
-- `otPrioridadAltaAbiertas`: `prioridad='alta'` y no terminal.
+- `otPrioridadAltaAbiertas`: prioridad = la fila `Prioridad` de nombre "Alta" (Fase C) y no terminal.
 - `otPendientesCotizarOAprobar`: `estado='en_cotizacion'` **o** alguna cotización propia en `estado='enviada'`.
-- `ticketsNuevosSinResponder`: `estado='nuevo'`.
+- `ticketsNuevosSinResponder`: estado con `esEstadoInicial: true` (Fase C; antes `estado='nuevo'`).
 
 ### POST /notificaciones/:id/leer · cualquiera
 
@@ -602,7 +629,7 @@ Marca todas las no leídas del actor → `200 { data: null }`. No toca las de ot
 
 ## Eventos de auditoría (`eventos[].tipo` en el detalle de OT)
 
-`creado`, `estado_cambiado {de,a}`, `prioridad_cambiada {de,a}`, `derivado {de,a,motivo,mantuvoComoColaborador}`, `comentario {comentarioId,visibleCliente}`, `horas_registradas {horaId,usuarioId,fecha,horas}`, `horas_eliminadas {horaId,usuarioId,horas}`, `colaborador_agregado|colaborador_quitado {usuarioId}`, `etapa_creada|etapa_eliminada {etapaId}`, `etapa_editada {etapaId,campos}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `ot_editada {campos}`, `cotizacion_creada {cotizacionId,numero}` (Fase 2, solo si la cotización nació con `otId`), `cotizacion_vinculada {cotizacionId,numero}` (Fase 2), `cotizacion_estado_cambiado {cotizacionId,de,a}` (Fase 2, reflejo del evento que ya vive en el timeline de la cotización). Los payloads guardan ids, no copias de datos personales.
+`creado`, `estado_cambiado {de,a}`, `prioridad_cambiada {de,a}` (`de`/`a` = **uuid** de `Prioridad`, Fase C — antes el valor del enum), `derivado {de,a,motivo,mantuvoComoColaborador}`, `comentario {comentarioId,visibleCliente}`, `horas_registradas {horaId,usuarioId,fecha,horas}`, `horas_eliminadas {horaId,usuarioId,horas}`, `colaborador_agregado|colaborador_quitado {usuarioId}`, `etapa_creada|etapa_eliminada {etapaId}`, `etapa_editada {etapaId,campos}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `ot_editada {campos}`, `cotizacion_creada {cotizacionId,numero}` (Fase 2, solo si la cotización nació con `otId`), `cotizacion_vinculada {cotizacionId,numero}` (Fase 2), `cotizacion_estado_cambiado {cotizacionId,de,a}` (Fase 2, reflejo del evento que ya vive en el timeline de la cotización). Los payloads guardan ids, no copias de datos personales.
 
 ## Eventos de auditoría propios de una cotización (`eventos[].tipo` en `GET /cotizaciones/:id`)
 
@@ -610,7 +637,7 @@ Marca todas las no leídas del actor → `200 { data: null }`. No toca las de ot
 
 ## Eventos de auditoría de un ticket (`eventos[].tipo` en el detalle de ticket, Fase 3)
 
-`creado {numero,canal,recepcionadoPorId,clienteId}`, `estado_cambiado {de,a}`, `prioridad_cambiada {de,a}`, `ticket_editado {campos}`, `tomado {usuarioId}` (sin equivalente en OT: un ticket puede tomarse solo, una OT siempre nace con responsable), `derivado {de,a,motivo}` (sin `mantuvoComoColaborador`: el ticket no tiene colaboradores), `respuesta_cliente {mensajeId}`, `nota_interna {mensajeId}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `vinculado_ot {otId,otNumero,esOrigen}` (`esOrigen:true` si vino de `convertir-a-ot`, `false` si fue un vínculo manual), `ot_desvinculada {otId,otNumero}`.
+`creado {numero,canal,recepcionadoPorId,clienteId}` (`canal` = nombre del `CanalTicket`, Fase C), `estado_cambiado {de,a}` (`de`/`a` = **nombres** de `EstadoTicket`, Fase C), `prioridad_cambiada {de,a}` (`de`/`a` = **uuid** de `Prioridad`, Fase C — antes el valor del enum), `ticket_editado {campos}`, `tomado {usuarioId}` (sin equivalente en OT: un ticket puede tomarse solo, una OT siempre nace con responsable), `derivado {de,a,motivo}` (sin `mantuvoComoColaborador`: el ticket no tiene colaboradores), `respuesta_cliente {mensajeId}`, `nota_interna {mensajeId}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `vinculado_ot {otId,otNumero,esOrigen}` (`esOrigen:true` si vino de `convertir-a-ot`, `false` si fue un vínculo manual), `ot_desvinculada {otId,otNumero}`.
 
 El evento `creado` de una **OT** nacida de una conversión (Fase 3) extiende el payload habitual con `origenTicketId`/`origenTicketNumero`, para componer "creada desde TK-000X por [actor]".
 
@@ -636,10 +663,10 @@ Base: `/publico` (sin prefijo `/api/v1`, sin JWT interno). Mismo envelope `{stat
 `multipart/form-data`. Campos de texto:
 
 ```
-nombre, correo, empresa? (→ solicitanteEmpresa), asunto, descripcion, prioridad? (default "media"), captchaToken
+nombre, correo, empresa? (→ solicitanteEmpresa), asunto, descripcion, prioridadId? (default: la prioridad "Media" sembrada), captchaToken
 ```
 
-Y archivos opcionales en el campo **`adjuntos`** (varios, mismas reglas de MIME/extensión/tamaño que `POST /adjuntos`, ver arriba). `canal` es siempre `'portal'` (no viene del body). `recepcionadoPor` = el usuario técnico `sistema`. Nace `estado: 'nuevo'`, sin responsable. Folio `TK-xxxx`; SLA calculado igual que la creación interna.
+Y archivos opcionales en el campo **`adjuntos`** (varios, mismas reglas de MIME/extensión/tamaño que `POST /adjuntos`, ver arriba). `canal` es siempre el `CanalTicket` "Portal" (Fase C; no viene del body). `recepcionadoPor` = el usuario técnico `sistema`. Nace en el estado con `esEstadoInicial: true` ("Nuevo"), sin responsable. Folio `TK-xxxx`; SLA calculado igual que la creación interna. `prioridadId`, si viene, debe ser una prioridad existente y activa (`400 PRIORIDAD_INVALIDA` si no).
 
 ```
 curl -F nombre="Juan Pérez" -F correo="juan@cliente.cl" -F asunto="No enciende el equipo" \
@@ -668,12 +695,13 @@ Errores: `400 VALIDATION_ERROR`; `429 RATE_LIMITED` (10/hora por IP **y**, por s
 DTO reducido, construido campo a campo (`toPortalTicket`/`toPortalOt`, nunca spread de la entidad ni el DTO interno):
 
 ```json
-{ "numero": "TK-0001", "asunto": "…", "descripcion": "…", "estado": "abierto",
+{ "numero": "TK-0001", "asunto": "…", "descripcion": "…", "estado": "Abierto",
   "fechaIngreso": "…",
   "mensajes": [{ "id": "…", "tipo": "cliente", "cuerpo": "…", "creadoEn": "…" }],
   "ot": { "estado": "en_ejecucion", "fechaEstimadaTermino": "2026-10-01", "responsableNombre": "…" } }
 ```
 
+- `estado` (Fase C): el **nombre** de la fila `EstadoTicket` actual del ticket (antes el valor del enum, ej. `"abierto"`).
 - `mensajes`: el hilo del ticket **excluyendo `nota_interna`** (filtro en el `WHERE`, no en memoria); incluye `tipo: "cliente"` (mensajes del propio solicitante) y `"respuesta_cliente"` (respuestas del staff), en orden cronológico.
 - `ot`: `null` si el ticket no tiene ninguna OT vinculada; si tiene una o más, la de origen primero (o la más antigua si ninguna es de origen) — **nunca** horas, montos, cotizaciones ni otros datos internos.
 
@@ -735,7 +763,7 @@ Lista paginada de **todos** los tickets cuyo `solicitanteEmail` coincide con el 
 
 ```json
 { "status": "ok",
-  "data": [{ "numero": "TK-0007", "asunto": "…", "estado": "nuevo", "fechaIngreso": "…" }],
+  "data": [{ "numero": "TK-0007", "asunto": "…", "estado": "Nuevo", "fechaIngreso": "…" }],
   "meta": { "page": 1, "perPage": 25, "total": 1 } }
 ```
 
@@ -788,7 +816,7 @@ Pipeline por mensaje (orden fijo):
 2. **Bucles** (`estado='ignorado'`, sin tocar ningún ticket): cabecera `Auto-Submitted` presente y distinta de `no`; `Precedence: bulk` o `auto_reply`; remitente = `SOPORTE_EMAIL`; `Content-Type: multipart/report`; remitente `mailer-daemon@...`.
 3. **Threading**: `In-Reply-To`/`References` contra `mensaje_ticket.message_id` (coincidencia exacta) primero; si no hay match, `TK-\d{4}` en el asunto, validando que el remitente coincida con `ticket.solicitanteEmail` (si no coincide, se trata como ticket **nuevo**, nunca secuestra el ticket ajeno). Sin match de ninguna de las dos: ticket nuevo.
 4. **Ticket existente**: nuevo `mensaje_ticket` (`tipo='cliente'`, `autorId=null`, `autorExterno`=remitente, `cuerpo`=texto plano, `cuerpoHtml`=HTML sanitizado con `sanitize-html` si vino, `messageId`/`inReplyTo`/`referencias` copiados). Si el ticket estaba `esperando_cliente` o `resuelto`: reabre a `abierto` y cierra la pausa de SLA activa (función compartida con el portal, `ticket.common.ts::reabrirTicketSiCorresponde`); `cerrado` no se reabre. Evento `mensaje_cliente {mensajeId}`.
-5. **Ticket nuevo**: `canal='correo'`, `recepcionadoPor='sistema'`, `solicitanteNombre`/`solicitanteEmail` del remitente, `asunto` del correo, `descripcion`=texto plano (sin generar un primer `mensaje_ticket`, igual que el portal), folio `TK-xxxx`, prioridad `media` (el correo no trae una señal de prioridad, mismo default que el portal), SLA calculado igual que las demás rutas de creación, `fechaIngreso` = cuándo llegó el correo (no cuándo se procesó). Los adjuntos del correo **sí** se guardan en un ticket nuevo (decisión documentada, `entidadTipo='ticket'`), ya que no hay `mensaje_ticket` al cual colgarlos (el cuerpo va directo a `descripcion`).
+5. **Ticket nuevo**: canal = la fila `CanalTicket` de nombre "Correo" (Fase C), `recepcionadoPor='sistema'`, `solicitanteNombre`/`solicitanteEmail` del remitente, `asunto` del correo, `descripcion`=texto plano (sin generar un primer `mensaje_ticket`, igual que el portal), folio `TK-xxxx`, prioridad = la fila "Media" (el correo no trae una señal de prioridad, mismo default que el portal), SLA calculado igual que las demás rutas de creación, `fechaIngreso` = cuándo llegó el correo (no cuándo se procesó). Los adjuntos del correo **sí** se guardan en un ticket nuevo (decisión documentada, `entidadTipo='ticket'`), ya que no hay `mensaje_ticket` al cual colgarlos (el cuerpo va directo a `descripcion`).
 6. **Adjuntos**: misma validación de MIME/extensión/tamaño que `POST /adjuntos`. Uno que no pasa la lista blanca se **descarta en silencio** (se deja constancia en el log, el resto del mensaje se procesa igual). Cuota excedida, fallo de antivirus o de almacenamiento **sí** propagan el error (todo el mensaje cae a `estado='error'`).
 7. Sin error: `correo_ingerido.estado='procesado'`, `ticketId` = el ticket correspondiente. Con una excepción no esperada: `estado='error'`, `error`=el mensaje.
 

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { Rol } from "../entities/enums.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API, crearClienteTest, crearEscenario, crearOtApi, crearSesionNombrada, otBody } from "../test/otHelpers.js";
 
 beforeAll(conectarBD);
@@ -27,8 +27,8 @@ describe("POST /ots", () => {
     const tec = await crearSesionNombrada(Rol.TECNICO, "tec_t");
     const cliente = await crearClienteTest();
 
-    const r1 = await post(tec.auth, "/ots", otBody(cliente.id));
-    const r2 = await post(admin.auth, "/ots", otBody(cliente.id));
+    const r1 = await post(tec.auth, "/ots", await otBody(cliente.id));
+    const r2 = await post(admin.auth, "/ots", await otBody(cliente.id));
 
     expect(r1.status).toBe(201);
     expect(r1.body.data.numero).toBe("OT-1041");
@@ -55,7 +55,7 @@ describe("POST /ots", () => {
     const otro = await crearSesionNombrada(Rol.TECNICO, "otro_t");
     const cliente = await crearClienteTest();
 
-    const res = await post(tec.auth, "/ots", otBody(cliente.id, { recepcionadoPorId: otro.usuario.id }));
+    const res = await post(tec.auth, "/ots", await otBody(cliente.id, { recepcionadoPorId: otro.usuario.id }));
 
     expect(res.status).toBe(400);
     expect(await AppDataSource.query("SELECT COUNT(*) AS n FROM ot").then((r) => r[0].n)).toBe(0);
@@ -73,7 +73,7 @@ describe("POST /ots", () => {
   it("OT interna válida: area sin cliente", async () => {
     const tec = await crearSesionNombrada(Rol.TECNICO, "tec_t");
 
-    const res = await post(tec.auth, "/ots", otBody("", { clienteId: undefined, esInterna: true, areaInterna: "Sistemas" }));
+    const res = await post(tec.auth, "/ots", await otBody("", { clienteId: undefined, esInterna: true, areaInterna: "Sistemas" }));
 
     expect(res.status).toBe(201);
     expect(res.body.data).toMatchObject({ esInterna: true, areaInterna: "Sistemas", cliente: null });
@@ -86,13 +86,13 @@ describe("POST /ots", () => {
     ["no interna con areaInterna", { areaInterna: "TI" }],
     ["fecha estimada inexistente", { fechaEstimadaTermino: "2026-02-30" }],
     ["fecha estimada con formato inválido", { fechaEstimadaTermino: "30/02/2026" }],
-    ["prioridad desconocida", { prioridad: "urgente" }],
+    ["prioridadId inválido", { prioridadId: "urgente" }],
     ["título vacío", { titulo: "   " }],
   ])("400 (no 500) con %s", async (_n, extra) => {
     const tec = await crearSesionNombrada(Rol.TECNICO, "tec_t");
     const cliente = await crearClienteTest();
 
-    const res = await post(tec.auth, "/ots", otBody(cliente.id, extra as Record<string, unknown>));
+    const res = await post(tec.auth, "/ots", await otBody(cliente.id, extra as Record<string, unknown>));
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("VALIDATION_ERROR");
@@ -102,8 +102,8 @@ describe("POST /ots", () => {
     const tec = await crearSesionNombrada(Rol.TECNICO, "tec_t");
     const inactivo = await crearClienteTest("Inactivo SA", false);
 
-    const a = await post(tec.auth, "/ots", otBody(inactivo.id));
-    const b = await post(tec.auth, "/ots", otBody("11111111-1111-4111-8111-111111111111"));
+    const a = await post(tec.auth, "/ots", await otBody(inactivo.id));
+    const b = await post(tec.auth, "/ots", await otBody("11111111-1111-4111-8111-111111111111"));
 
     expect(a.status).toBe(400);
     expect(a.body.code).toBe("CLIENTE_INVALIDO");
@@ -116,9 +116,9 @@ describe("POST /ots", () => {
     const sistema = await crearSesionNombrada(Rol.TECNICO, "sistema", { activo: true });
     const cliente = await crearClienteTest();
 
-    const a = await post(tec.auth, "/ots", otBody(cliente.id, { responsableId: inactivo.usuario.id }));
-    const b = await post(tec.auth, "/ots", otBody(cliente.id, { responsableId: sistema.usuario.id }));
-    const ok = await post(tec.auth, "/ots", otBody(cliente.id));
+    const a = await post(tec.auth, "/ots", await otBody(cliente.id, { responsableId: inactivo.usuario.id }));
+    const b = await post(tec.auth, "/ots", await otBody(cliente.id, { responsableId: sistema.usuario.id }));
+    const ok = await post(tec.auth, "/ots", await otBody(cliente.id));
 
     expect(a.status).toBe(400);
     expect(b.status).toBe(400);
@@ -129,7 +129,7 @@ describe("POST /ots", () => {
     const tec = await crearSesionNombrada(Rol.TECNICO, "tec_t");
     const cliente = await crearClienteTest();
 
-    const res = await post(tec.auth, "/ots", otBody(cliente.id, { colaboradorIds: [tec.usuario.id] }));
+    const res = await post(tec.auth, "/ots", await otBody(cliente.id, { colaboradorIds: [tec.usuario.id] }));
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("COLABORADOR_INVALIDO");
@@ -187,14 +187,15 @@ describe("POST /ots/:id/estado", () => {
 describe("PATCH /ots/:id", () => {
   it("cambio de prioridad genera prioridad_cambiada; solo lo que cambia genera evento", async () => {
     const e = await crearEscenario();
+    const [media, alta] = await Promise.all([obtenerPrioridadPorNombre("Media"), obtenerPrioridadPorNombre("Alta")]);
 
-    const res = await patch(e.resp.auth, `/ots/${e.otId}`, { prioridad: "alta", titulo: "Mantención de bomba" });
+    const res = await patch(e.resp.auth, `/ots/${e.otId}`, { prioridadId: alta.id, titulo: "Mantención de bomba" });
 
     expect(res.status).toBe(200);
-    expect(res.body.data.prioridad).toBe("alta");
+    expect(res.body.data.prioridad).toEqual({ id: alta.id, nombre: "Alta" });
     const eventos = (await eventosDe(e.otId)).slice(1);
     expect(eventos.map((x) => x.tipo)).toEqual(["prioridad_cambiada"]); // el título es igual: no genera ot_editada
-    expect(JSON.parse(eventos[0]!.payload)).toEqual({ de: "media", a: "alta" });
+    expect(JSON.parse(eventos[0]!.payload)).toEqual({ de: media.nombre, a: alta.nombre });
   });
 
   it("edición de campos: ot_editada con la lista de campos cambiados", async () => {
@@ -290,11 +291,16 @@ describe("GET /ots (listado)", () => {
     const tec = await crearSesionNombrada(Rol.TECNICO, "tec_t");
     const c1 = await crearClienteTest("Cliente Uno");
     const c2 = await crearClienteTest("Cliente Dos");
-    const a = await crearOtApi(admin.auth, c1.id, { titulo: "Bomba alfa", prioridad: "media", solicitanteNombre: "Juan Pérez" });
-    const b = await crearOtApi(admin.auth, c2.id, { titulo: "Ventilador 100% listo", prioridad: "alta", categoria: "reparacion", responsableId: tec.usuario.id });
-    const c = await crearOtApi(admin.auth, c1.id, { titulo: "Servidor [rack_1]", prioridad: "baja", clienteId: undefined, esInterna: true, areaInterna: "TI" });
+    const [media, alta, baja] = await Promise.all([
+      obtenerPrioridadPorNombre("Media"),
+      obtenerPrioridadPorNombre("Alta"),
+      obtenerPrioridadPorNombre("Baja"),
+    ]);
+    const a = await crearOtApi(admin.auth, c1.id, { titulo: "Bomba alfa", prioridadId: media.id, solicitanteNombre: "Juan Pérez" });
+    const b = await crearOtApi(admin.auth, c2.id, { titulo: "Ventilador 100% listo", prioridadId: alta.id, categoria: "reparacion", responsableId: tec.usuario.id });
+    const c = await crearOtApi(admin.auth, c1.id, { titulo: "Servidor [rack_1]", prioridadId: baja.id, clienteId: undefined, esInterna: true, areaInterna: "TI" });
     await post(admin.auth, `/ots/${b.id}/estado`, { estado: "en_ejecucion" });
-    return { admin, tec, c1, c2, a, b, c };
+    return { admin, tec, c1, c2, a, b, c, media, alta, baja };
   }
   const numeros = (res: request.Response) => res.body.data.map((o: { numero: string }) => o.numero);
 
@@ -335,7 +341,7 @@ describe("GET /ots (listado)", () => {
     const ids = async (q: string, auth = s.admin.auth) => numeros(await get(auth, `/ots?orden=numero&dir=asc&${q}`));
 
     expect(await ids("estado=en_ejecucion")).toEqual(["OT-1042"]);
-    expect(await ids("prioridad=baja")).toEqual(["OT-1043"]);
+    expect(await ids(`prioridadId=${s.baja.id}`)).toEqual(["OT-1043"]);
     expect(await ids("categoria=reparacion")).toEqual(["OT-1042"]);
     expect(await ids(`clienteId=${s.c1.id}`)).toEqual(["OT-1041"]);
     expect(await ids(`responsableId=${s.tec.usuario.id}`)).toEqual(["OT-1042"]);
@@ -403,7 +409,7 @@ describe("GET /ots (listado)", () => {
       areaInterna: null,
       esInterna: false,
       categoria: "mantencion",
-      prioridad: "media",
+      prioridad: { id: s.media.id, nombre: "Media" },
       origen: "telefono",
       estado: "ingresado",
       solicitanteNombre: "Juan Pérez",
@@ -427,6 +433,7 @@ describe("GET /ots/kanban", () => {
     expect(res.body.data.map((c: { estado: string }) => c.estado)).toEqual([
       "ingresado", "en_cotizacion", "aprobado", "en_ejecucion", "terminado", "facturado",
     ]);
+    const media = await obtenerPrioridadPorNombre("Media");
     const aprobado = res.body.data[2];
     expect(aprobado.total).toBe(1);
     expect(aprobado.ots[0]).toEqual({
@@ -435,7 +442,7 @@ describe("GET /ots/kanban", () => {
       titulo: "Mantención de bomba",
       cliente: { id: e.cliente.id, nombre: e.cliente.nombre },
       areaInterna: null,
-      prioridad: "media",
+      prioridad: { id: media.id, nombre: "Media" },
       responsable: { id: e.resp.usuario.id, nombre: e.resp.usuario.nombre },
       colaboradores: { items: [{ id: e.colab.usuario.id, nombre: e.colab.usuario.nombre }], total: 1 },
       fechaEstimadaTermino: null,
@@ -461,9 +468,10 @@ describe("GET /ots/kanban", () => {
 
   it("aplica los mismos filtros que el listado", async () => {
     const e = await crearEscenario();
-    await crearOtApi(e.admin.auth, e.cliente.id, { prioridad: "alta", titulo: "Urgente 100%" });
+    const prioridadAlta = await obtenerPrioridadPorNombre("Alta");
+    await crearOtApi(e.admin.auth, e.cliente.id, { prioridadId: prioridadAlta.id, titulo: "Urgente 100%" });
 
-    const alta = await get(e.admin.auth, "/ots/kanban?prioridad=alta");
+    const alta = await get(e.admin.auth, `/ots/kanban?prioridadId=${prioridadAlta.id}`);
     const q = await get(e.admin.auth, `/ots/kanban?q=${encodeURIComponent("%")}`);
     const mios = await get(e.ajeno.auth, "/ots/kanban?mios=true");
 

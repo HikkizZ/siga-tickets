@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { sumarHorasHabiles, ZONA_HORARIA_SLA } from "../sla/horasHabiles.js";
-import { conectarBD, limpiarBD } from "../test/helpers.js";
+import { conectarBD, limpiarBD, obtenerPrioridadPorNombre } from "../test/helpers.js";
 import { API, crearClienteTest, crearOtApi, crearSesionNombrada } from "../test/otHelpers.js";
 import { calendarioYFeriadosReales } from "../test/slaHelpers.js";
 import { Rol } from "../entities/enums.js";
@@ -13,20 +13,24 @@ beforeAll(conectarBD);
 beforeEach(limpiarBD);
 afterAll(() => AppDataSource.destroy());
 
-// Horas de resolución de la semilla de sla_config (docs/backend-diseno.md sección 2.3).
-const HORAS_RESOLUCION: Record<string, number> = { alta: 24, media: 72, baja: 120 };
+// Fase C: sla_config se retiró; estos son los mismos valores reales (docs/backend-diseno.md
+// sección de esta fase) que ahora vive en plan_sla, sembrados por la migración y por
+// test/helpers.ts::limpiarBD.
+const HORAS_RESOLUCION: Record<string, number> = { alta: 24, media: 48, baja: 120 };
+const NOMBRE_PRIORIDAD: Record<string, string> = { alta: "Alta", media: "Media", baja: "Baja" };
 
 async function detalleOt(auth: string, id: string) {
   const res = await request(app).get(`${API}/ots/${id}`).set("Authorization", auth);
   if (res.status !== 200) throw new Error(`detalleOt falló: ${res.status} ${JSON.stringify(res.body)}`);
-  return res.body.data as { fechaIngreso: string; slaResolucionVenceEn: string | null; prioridad: string };
+  return res.body.data as { fechaIngreso: string; slaResolucionVenceEn: string | null; prioridad: { id: string; nombre: string } };
 }
 
 describe("SLA al crear/editar una OT (Fase 4)", () => {
   it.each(["alta", "media", "baja"] as const)("calcula slaResolucionVenceEn con las horas hábiles de la prioridad %s", async (prioridad) => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_ot_sla");
     const cliente = await crearClienteTest();
-    const ot = await crearOtApi(admin.auth, cliente.id, { prioridad });
+    const prioridadFila = await obtenerPrioridadPorNombre(NOMBRE_PRIORIDAD[prioridad]!);
+    const ot = await crearOtApi(admin.auth, cliente.id, { prioridadId: prioridadFila.id });
 
     const detalle = await detalleOt(admin.auth, ot.id);
     expect(detalle.slaResolucionVenceEn).not.toBeNull();
@@ -46,10 +50,11 @@ describe("SLA al crear/editar una OT (Fase 4)", () => {
   it("cambiar la prioridad recalcula el vencimiento desde la fecha_ingreso ORIGINAL, no desde ahora", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_ot_sla2");
     const cliente = await crearClienteTest();
-    const ot = await crearOtApi(admin.auth, cliente.id, { prioridad: "baja" });
+    const [baja, alta] = await Promise.all([obtenerPrioridadPorNombre("Baja"), obtenerPrioridadPorNombre("Alta")]);
+    const ot = await crearOtApi(admin.auth, cliente.id, { prioridadId: baja.id });
     const antes = await detalleOt(admin.auth, ot.id);
 
-    const res = await request(app).patch(`${API}/ots/${ot.id}`).set("Authorization", admin.auth).send({ prioridad: "alta" });
+    const res = await request(app).patch(`${API}/ots/${ot.id}`).set("Authorization", admin.auth).send({ prioridadId: alta.id });
     expect(res.status).toBe(200);
 
     const { calendario, feriados } = await calendarioYFeriadosReales();
@@ -71,7 +76,8 @@ describe("SLA al crear/editar una OT (Fase 4)", () => {
   it("no cambiar la prioridad no toca el vencimiento", async () => {
     const admin = await crearSesionNombrada(Rol.ADMIN, "admin_ot_sla3");
     const cliente = await crearClienteTest();
-    const ot = await crearOtApi(admin.auth, cliente.id, { prioridad: "media" });
+    const media = await obtenerPrioridadPorNombre("Media");
+    const ot = await crearOtApi(admin.auth, cliente.id, { prioridadId: media.id });
     const antes = await detalleOt(admin.auth, ot.id);
 
     const res = await request(app).patch(`${API}/ots/${ot.id}`).set("Authorization", admin.auth).send({ titulo: "Nuevo título" });

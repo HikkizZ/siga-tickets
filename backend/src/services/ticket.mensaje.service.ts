@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { AppDataSource } from "../config/dataSource.js";
 import { Adjunto } from "../entities/Adjunto.js";
+import { EstadoTicket } from "../entities/EstadoTicket.js";
 import { MensajeTicket } from "../entities/MensajeTicket.js";
 import { Ticket } from "../entities/Ticket.js";
-import { EntidadAdjunto, EstadoTicket, TipoMensajeTicket } from "../entities/enums.js";
+import { EntidadAdjunto, TipoMensajeTicket } from "../entities/enums.js";
 import { AppError } from "../errors/AppError.js";
 import { exigir, puedePublicarMensaje } from "../policies/ticket.policy.js";
 import { toAdjuntoDto } from "./adjunto.dto.js";
@@ -70,8 +71,14 @@ export async function crearMensaje(actor: UsuarioActor, ticketId: string, input:
         ticket.primeraRespuestaEn = await ahoraDb(m);
         cambio = true;
       }
-      if (ticket.estado === EstadoTicket.NUEVO) {
-        ticket.estado = EstadoTicket.ABIERTO;
+      // Fase C: el estado "Nuevo" se identifica por el flag esEstadoInicial (no por comparar contra
+      // un valor de enum fijo). Al pasar a "Abierto" se usa la fila con esDestinoReapertura=true,
+      // mismo destino que reabrirTicketSiCorresponde (ver ticket.common.ts).
+      const estadoActual = await m.findOneByOrFail(EstadoTicket, { id: ticket.estadoId });
+      if (estadoActual.esEstadoInicial) {
+        const destino = await m.findOneBy(EstadoTicket, { esDestinoReapertura: true });
+        if (!destino) throw new Error("No hay ningún estado_ticket marcado como esDestinoReapertura=true");
+        ticket.estadoId = destino.id;
         cambio = true;
       }
       // Si estaba esperando_cliente, resuelto o cerrado, una respuesta_cliente del equipo NO

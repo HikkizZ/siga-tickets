@@ -4,7 +4,7 @@ import { app } from "../api/app.js";
 import { AppDataSource } from "../config/dataSource.js";
 import { comparePassword } from "../auth/password.js";
 import { Rol } from "../entities/enums.js";
-import { conectarBD, crearCuentaPortalTest, crearUsuarioSistemaTest, limpiarBD } from "../test/helpers.js";
+import { conectarBD, crearCuentaPortalTest, crearUsuarioSistemaTest, limpiarBD, obtenerEstadoTicketPorNombre } from "../test/helpers.js";
 import { API, crearSesionNombrada } from "../test/otHelpers.js";
 import { crearTicketPublicoApi, PORTAL, tokenPortalTest } from "../test/portalHelpers.js";
 
@@ -261,7 +261,8 @@ describe("POST /publico/cuentas/tickets/:numero/mensajes", () => {
     const ticketId = (fila.id as string).toLowerCase();
 
     await request(app).post(`${API}/tickets/${ticketId}/tomar`).set("Authorization", tecnico.auth);
-    await request(app).post(`${API}/tickets/${ticketId}/estado`).set("Authorization", tecnico.auth).send({ estado: "esperando_cliente" });
+    const esperandoCliente = await obtenerEstadoTicketPorNombre("Esperando cliente");
+    await request(app).post(`${API}/tickets/${ticketId}/estado`).set("Authorization", tecnico.auth).send({ estadoId: esperandoCliente.id });
 
     const res = await request(app)
       .post(`${PORTAL}/cuentas/tickets/${propio.numero}/mensajes`)
@@ -269,8 +270,11 @@ describe("POST /publico/cuentas/tickets/:numero/mensajes", () => {
       .field("cuerpo", "ya lo revisé");
     expect(res.status).toBe(201);
 
-    const [ticketFila] = await AppDataSource.query(`SELECT estado FROM ticket WHERE id = @0`, [ticketId]);
-    expect(ticketFila.estado).toBe("abierto");
+    const [ticketFila] = await AppDataSource.query(
+      `SELECT e.nombre AS estado FROM ticket t JOIN estado_ticket e ON e.id = t.estado_id WHERE t.id = @0`,
+      [ticketId],
+    );
+    expect(ticketFila.estado).toBe("Abierto");
   });
 
   it("sin token: 401", async () => {

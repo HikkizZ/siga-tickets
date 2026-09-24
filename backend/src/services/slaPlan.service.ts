@@ -1,10 +1,13 @@
 import { AppDataSource } from "../config/dataSource.js";
 import { PlanSla } from "../entities/PlanSla.js";
+import { Prioridad } from "../entities/Prioridad.js";
 import { AppError } from "../errors/AppError.js";
 import { violacionUnica } from "../errors/dbErrors.js";
+import { enTransaccion } from "./folio.service.js";
+import { recalcularAbiertosPorPrioridad } from "./sla.calculo.service.js";
 
-// Fase B2: catálogo CRUD de Planes SLA con nombre propio (ver entities/PlanSla.ts para el alcance
-// acotado — todavía sin conexión al cálculo real de SLA, que sigue siendo sla_config).
+// Fase B2: catálogo CRUD de Planes SLA con nombre propio. Fase C: Prioridad.planSlaId lo conecta al
+// cálculo real de SLA (retira sla_config) — ver entities/PlanSla.ts y entities/Prioridad.ts.
 
 export interface PlanSlaDto {
   id: string;
@@ -82,32 +85,55 @@ export interface CambioPlanSla {
   umbralPorVencer?: number | undefined;
 }
 
+// Cuando cambian los umbrales/horas de un plan, recalcula en la misma transacción los
+// tickets/OT ABIERTOS de cualquier prioridad que apunte a él (mismo espíritu que tenía
+// sla.config.service.ts::actualizarSlaConfig llamando a recalcularAbiertosPorPrioridad, ahora
+// retirado — ver sla.calculo.service.ts).
 export async function actualizarPlanSla(id: string, cambios: CambioPlanSla): Promise<PlanSlaDto> {
-  const repo = AppDataSource.getRepository(PlanSla);
-  const plan = await repo.findOneBy({ id });
-  if (!plan) throw new AppError(404, "NOT_FOUND", "Plan SLA no encontrado");
+  const dto = await enTransaccion(AppDataSource, async (m) => {
+    const plan = await m.findOneBy(PlanSla, { id });
+    if (!plan) throw new AppError(404, "NOT_FOUND", "Plan SLA no encontrado");
 
-  if (cambios.nombre !== undefined) plan.nombre = cambios.nombre;
-  if (cambios.activo !== undefined) plan.activo = cambios.activo;
-  if (cambios.horasResolucion !== undefined) plan.horasResolucion = cambios.horasResolucion;
-  if (cambios.horasPrimeraRespuesta !== undefined) plan.horasPrimeraRespuesta = cambios.horasPrimeraRespuesta;
-  if (cambios.usarHorasHabiles !== undefined) plan.usarHorasHabiles = cambios.usarHorasHabiles;
-  if (cambios.pausarEnEsperaCliente !== undefined) plan.pausarEnEsperaCliente = cambios.pausarEnEsperaCliente;
-  if (cambios.umbralPorVencer !== undefined) plan.umbralPorVencer = cambios.umbralPorVencer;
+    if (cambios.nombre !== undefined) plan.nombre = cambios.nombre;
+    if (cambios.activo !== undefined) plan.activo = cambios.activo;
+    if (cambios.horasResolucion !== undefined) plan.horasResolucion = cambios.horasResolucion;
+    if (cambios.horasPrimeraRespuesta !== undefined) plan.horasPrimeraRespuesta = cambios.horasPrimeraRespuesta;
+    if (cambios.usarHorasHabiles !== undefined) plan.usarHorasHabiles = cambios.usarHorasHabiles;
+    if (cambios.pausarEnEsperaCliente !== undefined) plan.pausarEnEsperaCliente = cambios.pausarEnEsperaCliente;
+    if (cambios.umbralPorVencer !== undefined) plan.umbralPorVencer = cambios.umbralPorVencer;
 
-  try {
-    await repo.save(plan);
-  } catch (err) {
-    throw conflictoNombre(err) ?? err;
-  }
-  // Mismo motivo que en crearPlanSla(): no confiar en `plan` post-save para el campo decimal.
-  return toDto(await repo.findOneByOrFail({ id }));
+    try {
+      await m.save(PlanSla, plan);
+    } catch (err) {
+      throw conflictoNombre(err) ?? err;
+    }
+    // Mismo motivo que en crearPlanSla(): no confiar en `plan` post-save para el campo decimal.
+    const actualizado = await m.findOneByOrFail(PlanSla, { id });
+
+    const prioridades = await m.find(Prioridad, { where: { planSlaId: id } });
+    for (const p of prioridades) {
+      await recalcularAbiertosPorPrioridad(m, p.id, {
+        horasResolucion: actualizado.horasResolucion,
+        horasPrimeraRespuesta: actualizado.horasPrimeraRespuesta,
+        usarHorasHabiles: actualizado.usarHorasHabiles,
+      });
+    }
+    return actualizado;
+  });
+  return toDto(dto);
 }
 
-// A diferencia de Departamentos/Temas de ayuda, un Plan SLA sí se puede borrar de verdad: hoy no
-// hay ninguna FK que apunte a plan_sla (ver entities/PlanSla.ts). Si en el futuro algo lo
-// referencia, este DELETE habrá que revisarlo (o reemplazarlo por un soft-delete vía `activo`).
+// A diferencia de Departamentos/Temas de ayuda, un Plan SLA sí se puede borrar de verdad. Fase C:
+// ahora prioridad.plan_sla_id SÍ puede apuntar a este plan (ON DELETE SET NULL); antes de borrar,
+// cualquier prioridad que lo referencie se recalcula como "sin SLA" (sus vencimientos abiertos
+// quedan en NULL, consistente con "sin plan = sin SLA").
 export async function eliminarPlanSla(id: string): Promise<void> {
-  const res = await AppDataSource.getRepository(PlanSla).delete({ id });
-  if (!res.affected) throw new AppError(404, "NOT_FOUND", "Plan SLA no encontrado");
+  await enTransaccion(AppDataSource, async (m) => {
+    const prioridades = await m.find(Prioridad, { where: { planSlaId: id } });
+    const res = await m.delete(PlanSla, { id });
+    if (!res.affected) throw new AppError(404, "NOT_FOUND", "Plan SLA no encontrado");
+    for (const p of prioridades) {
+      await recalcularAbiertosPorPrioridad(m, p.id, null);
+    }
+  });
 }

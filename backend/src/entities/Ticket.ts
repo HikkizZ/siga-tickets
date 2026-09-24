@@ -1,9 +1,12 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, OneToMany, PrimaryColumn } from "typeorm";
+import { CanalTicket } from "./CanalTicket.js";
 import { Cliente } from "./Cliente.js";
+import { EstadoTicket } from "./EstadoTicket.js";
 import { MensajeTicket } from "./MensajeTicket.js";
+import { Prioridad } from "./Prioridad.js";
 import { TemaAyuda } from "./TemaAyuda.js";
 import { Usuario } from "./Usuario.js";
-import { CanalTicket, EstadoTicket, Prioridad, SlaEstado } from "./enums.js";
+import { SlaEstado } from "./enums.js";
 import { uuidTransformer } from "./transformers.js";
 
 @Entity("ticket")
@@ -40,13 +43,26 @@ export class Ticket {
   @JoinColumn({ name: "cliente_id" })
   cliente!: Cliente | null;
 
-  @Column({ type: "nvarchar", length: 20 })
+  // Fase C: antes columnas string con CHECK (enums fijos); ahora FK a catálogos configurables.
+  @Column({ type: "uniqueidentifier", transformer: uuidTransformer })
+  canalId!: string;
+
+  @ManyToOne(() => CanalTicket, { nullable: false, onDelete: "NO ACTION" })
+  @JoinColumn({ name: "canal_id" })
   canal!: CanalTicket;
 
-  @Column({ type: "nvarchar", length: 10 })
+  @Column({ type: "uniqueidentifier", transformer: uuidTransformer })
+  prioridadId!: string;
+
+  @ManyToOne(() => Prioridad, { nullable: false, onDelete: "NO ACTION" })
+  @JoinColumn({ name: "prioridad_id" })
   prioridad!: Prioridad;
 
-  @Column({ type: "nvarchar", length: 20, default: EstadoTicket.NUEVO })
+  @Column({ type: "uniqueidentifier", transformer: uuidTransformer })
+  estadoId!: string;
+
+  @ManyToOne(() => EstadoTicket, { nullable: false, onDelete: "NO ACTION" })
+  @JoinColumn({ name: "estado_id" })
   estado!: EstadoTicket;
 
   @Column({ type: "datetimeoffset", precision: 3, default: () => "SYSDATETIMEOFFSET()" })

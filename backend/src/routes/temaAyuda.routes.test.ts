@@ -5,7 +5,7 @@ import { AppDataSource } from "../config/dataSource.js";
 import { Departamento } from "../entities/Departamento.js";
 import { TemaAyuda } from "../entities/TemaAyuda.js";
 import { Rol } from "../entities/enums.js";
-import { conectarBD, crearSesion, limpiarBD } from "../test/helpers.js";
+import { conectarBD, crearSesion, limpiarBD, obtenerPrioridadPorNombre } from "../test/helpers.js";
 
 beforeAll(conectarBD);
 beforeEach(limpiarBD);
@@ -69,11 +69,12 @@ describe("escritura de temas de ayuda: solo admin", () => {
   it("admin crea un tema de ayuda con departamento y prioridad sugerida", async () => {
     const { auth } = await crearSesion(Rol.ADMIN);
     const departamento = await AppDataSource.getRepository(Departamento).save({ nombre: "Soporte técnico" });
+    const alta = await obtenerPrioridadPorNombre("Alta");
 
     const res = await request(app)
       .post("/api/v1/temas-ayuda")
       .set("Authorization", auth)
-      .send({ nombre: "Falla de hardware", departamentoId: departamento.id, prioridadSugerida: "alta", orden: 2 });
+      .send({ nombre: "Falla de hardware", departamentoId: departamento.id, prioridadSugeridaId: alta.id, orden: 2 });
 
     expect(res.status).toBe(201);
     expect(res.body.data).toEqual({
@@ -82,7 +83,7 @@ describe("escritura de temas de ayuda: solo admin", () => {
       activo: true,
       esPublico: true,
       departamento: { id: departamento.id, nombre: "Soporte técnico" },
-      prioridadSugerida: "alta",
+      prioridadSugerida: { id: alta.id, nombre: "Alta" },
       orden: 2,
     });
   });

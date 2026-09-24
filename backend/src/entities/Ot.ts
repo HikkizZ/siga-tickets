@@ -1,8 +1,9 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, OneToMany, PrimaryColumn } from "typeorm";
 import { Cliente } from "./Cliente.js";
 import { EtapaOt } from "./EtapaOt.js";
+import { Prioridad } from "./Prioridad.js";
 import { Usuario } from "./Usuario.js";
-import { CategoriaOt, EstadoOt, OrigenOt, Prioridad, SlaEstado } from "./enums.js";
+import { CategoriaOt, EstadoOt, OrigenOt, SlaEstado } from "./enums.js";
 import { uuidTransformer } from "./transformers.js";
 
 @Entity("ot")
@@ -36,7 +37,13 @@ export class Ot {
   @Column({ type: "nvarchar", length: 20 })
   categoria!: CategoriaOt;
 
-  @Column({ type: "nvarchar", length: 10 })
+  // Fase C: antes columna string con CHECK (mismo enum que Ticket); ahora FK al catálogo
+  // compartido (entities/Prioridad.ts) — comparte tabla con Ticket.prioridadId.
+  @Column({ type: "uniqueidentifier", transformer: uuidTransformer })
+  prioridadId!: string;
+
+  @ManyToOne(() => Prioridad, { nullable: false, onDelete: "NO ACTION" })
+  @JoinColumn({ name: "prioridad_id" })
   prioridad!: Prioridad;
 
   @Column({ type: "nvarchar", length: 20 })

@@ -1,11 +1,11 @@
 import { Column, CreateDateColumn, Entity, PrimaryColumn } from "typeorm";
 import { numericTransformer, uuidTransformer } from "./transformers.js";
 
-// Fase B2: catálogo de Planes SLA con nombre propio (a diferencia de sla_config, que son 3 filas
-// fijas por prioridad). Mismos 5 campos de configuración que SlaConfig, pero acá puede haber muchas
-// filas, cada una activable/desactivable. ALCANCE ACOTADO A PROPÓSITO: esto es solo un catálogo
-// CRUD, todavía sin ninguna relación desde OT/Ticket ni conectado al cálculo real de SLA (ese sigue
-// siendo sla_config, sin cambios) — ver docs/backend-diseno.md, sección de esta fase.
+// Fase B2: catálogo de Planes SLA con nombre propio (a diferencia del extinto sla_config, que eran
+// 3 filas fijas por prioridad). Puede haber muchas filas, cada una activable/desactivable.
+// Fase C: Prioridad.planSlaId conecta cada prioridad a un plan de aquí — este catálogo pasa a ser
+// el único sistema real de cálculo de SLA (sla_config se retira) — ver entities/Prioridad.ts y
+// docs/backend-diseno.md, sección de esta fase.
 @Entity("plan_sla")
 export class PlanSla {
   @PrimaryColumn({ type: "uniqueidentifier", default: () => "NEWID()", transformer: uuidTransformer })

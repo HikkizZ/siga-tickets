@@ -78,13 +78,14 @@ export async function misTicketsCuentaPortal(
   // (mismo criterio que ticket.solicitanteEmail en el resto del portal).
   const [tickets, total] = await AppDataSource.getRepository(Ticket).findAndCount({
     where: { solicitanteEmail: email },
+    relations: { estado: true },
     order: { fechaIngreso: "DESC" },
     skip: perPage * (page - 1),
     take: perPage,
   });
 
   return {
-    data: tickets.map((t) => ({ numero: t.numero, asunto: t.asunto, estado: t.estado, fechaIngreso: t.fechaIngreso })),
+    data: tickets.map((t) => ({ numero: t.numero, asunto: t.asunto, estado: t.estado.nombre, fechaIngreso: t.fechaIngreso })),
     meta: { page, perPage, total },
   };
 }

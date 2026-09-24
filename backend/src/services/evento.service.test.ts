@@ -21,7 +21,7 @@ describe("payload de eventos", () => {
     const validos = [
       { tipo: "creado", numero: "OT-1041", responsableId: id(), clienteId: null, esInterna: true },
       { tipo: "estado_cambiado", de: "ingresado", a: "aprobado" },
-      { tipo: "prioridad_cambiada", de: "media", a: "alta" },
+      { tipo: "prioridad_cambiada", de: id(), a: id() },
       { tipo: "derivado", de: id(), a: id(), motivo: "motivo largo", mantuvoComoColaborador: false },
       { tipo: "comentario", comentarioId: id(), visibleCliente: false },
       { tipo: "horas_registradas", horaId: id(), usuarioId: id(), fecha: "2026-09-01", horas: 1.5 },

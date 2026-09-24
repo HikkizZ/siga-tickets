@@ -31,7 +31,7 @@ describe("GET /publico/ticket", () => {
     expect(res.status).toBe(200);
     expect(Object.keys(res.body.data).sort()).toEqual(["asunto", "descripcion", "estado", "fechaIngreso", "mensajes", "numero", "ot"].sort());
     expect(res.body.data.numero).toBe(numero);
-    expect(res.body.data.estado).toBe("nuevo");
+    expect(res.body.data.estado).toBe("Nuevo");
     expect(res.body.data.ot).toBeNull();
     expect(res.body.data.mensajes).toEqual([]);
   });

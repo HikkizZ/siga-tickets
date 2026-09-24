@@ -3,7 +3,10 @@ import { EntidadEvento } from "../entities/enums.js";
 import type { ManagerTransaccional } from "./folio.service.js";
 
 const id = z.string().uuid();
-const estado = z.string().min(1).max(20);
+// Fase C: antes un valor de enum fijo (máx. 20 chars); ahora es EstadoTicket.nombre, un catálogo
+// administrable cuyo propio Zod (validations/estadoTicket.validation.ts) permite hasta 60 chars —
+// deben coincidir o un estado personalizado largo rompería cambiarEstadoTicket al registrar el evento.
+const estado = z.string().min(1).max(60);
 
 // Payload por tipo de evento de OT. Guarda ids y valores de negocio, no copias de datos personales.
 // `.strict()`: un campo de más es un bug del servicio y debe fallar antes de escribir.
@@ -22,6 +25,8 @@ export const eventoOtSchema = z.discriminatedUnion("tipo", [
     })
     .strict(),
   z.object({ tipo: z.literal("estado_cambiado"), de: estado, a: estado }).strict(),
+  // Fase C: prioridad ya no es un valor de enum fijo sino Prioridad.nombre (catálogo administrable,
+  // ver entities/Prioridad.ts); mismo criterio que estado_cambiado, payload legible sin joins.
   z.object({ tipo: z.literal("prioridad_cambiada"), de: estado, a: estado }).strict(),
   z.object({ tipo: z.literal("derivado"), de: id.nullable(), a: id, motivo: z.string().min(1), mantuvoComoColaborador: z.boolean() }).strict(),
   z.object({ tipo: z.literal("comentario"), comentarioId: id, visibleCliente: z.boolean() }).strict(),
@@ -102,6 +107,7 @@ export async function registrarEventoCotizacion(
 export const eventoTicketSchema = z.discriminatedUnion("tipo", [
   z.object({ tipo: z.literal("creado"), numero: z.string(), canal: z.string(), recepcionadoPorId: id, clienteId: id.nullable() }).strict(),
   z.object({ tipo: z.literal("estado_cambiado"), de: estado, a: estado }).strict(),
+  // Fase C: prioridad ya no es un valor de enum fijo sino Prioridad.nombre (catálogo administrable).
   z.object({ tipo: z.literal("prioridad_cambiada"), de: estado, a: estado }).strict(),
   z.object({ tipo: z.literal("ticket_editado"), campos: z.array(z.string()).min(1) }).strict(),
   z.object({ tipo: z.literal("tomado"), usuarioId: id }).strict(),

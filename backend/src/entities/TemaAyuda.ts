@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, JoinColumn, ManyToOne, PrimaryColumn } from "typeorm";
 import { Departamento } from "./Departamento.js";
-import { Prioridad } from "./enums.js";
+import { Prioridad } from "./Prioridad.js";
 import { uuidTransformer } from "./transformers.js";
 
 // Fase B1: catálogo de temas de ayuda (inspirado en osTicket "Help Topics"), aditivo. Se puede
@@ -30,8 +30,12 @@ export class TemaAyuda {
   @JoinColumn({ name: "departamento_id" })
   departamento!: Departamento | null;
 
-  // Espejo del CHECK de la migración (mismo catálogo que Prioridad); sugerencia, no obligatoria.
-  @Column({ type: "nvarchar", length: 10, nullable: true })
+  // Fase C: antes columna string espejo del CHECK de Prioridad; ahora FK opcional al catálogo.
+  @Column({ type: "uniqueidentifier", transformer: uuidTransformer, nullable: true })
+  prioridadSugeridaId!: string | null;
+
+  @ManyToOne(() => Prioridad, { nullable: true, onDelete: "SET NULL" })
+  @JoinColumn({ name: "prioridad_sugerida_id" })
   prioridadSugerida!: Prioridad | null;
 
   // Orden manual para el listado (en vez de solo alfabético); ver GET /temas-ayuda.
