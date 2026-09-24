@@ -221,7 +221,7 @@ Mismos filtros que el listado (sin paginación ni orden). Devuelve siempre las 6
 
 ### PATCH /ots/:id · tecnico (responsable o colaborador)
 
-Body parcial: `titulo, descripcion, categoria, prioridadId, ubicacion, solicitanteNombre, solicitanteContacto, fechaEstimadaTermino` (los opcionales aceptan `null`), y `clienteId` (solo OT no interna) o `areaInterna` (solo OT interna). No se pueden cambiar `numero`, `estado`, `responsable`, `recepcionadoPor` (400). Solo los campos que cambian generan evento (`prioridad_cambiada` para la prioridad — payload `{de, a}` con los uuid de la fila anterior/nueva desde la Fase C — `ot_editada` para el resto). → `200 Detalle`.
+Body parcial: `titulo, descripcion, categoria, prioridadId, ubicacion, solicitanteNombre, solicitanteContacto, fechaEstimadaTermino` (los opcionales aceptan `null`), y `clienteId` (solo OT no interna) o `areaInterna` (solo OT interna). No se pueden cambiar `numero`, `estado`, `responsable`, `recepcionadoPor` (400). Solo los campos que cambian generan evento (`prioridad_cambiada` para la prioridad — payload `{de, a}` con los **nombres** de la fila anterior/nueva desde la Fase C, mismo criterio que Ticket — `ot_editada` para el resto). → `200 Detalle`.
 
 ### POST /ots/:id/estado · tecnico (responsable o colaborador)
 
@@ -412,7 +412,7 @@ GET /api/v1/tickets?sinAsignar=true&prioridadId=…&orden=fechaIngreso&dir=asc
 
 ### PATCH /tickets/:id · tecnico (solo responsable actual)
 
-Body parcial: `asunto?, descripcion?, prioridadId?`. Nunca `numero`, `estado`, `canal`, `recepcionadoPor`, `responsable` (`.strict()` los rechaza con `400`). Solo los campos que cambian generan evento (`prioridad_cambiada` con `{de,a}` = uuid de la prioridad anterior/nueva, `ticket_editado` para el resto). → `200 Detalle`.
+Body parcial: `asunto?, descripcion?, prioridadId?`. Nunca `numero`, `estado`, `canal`, `recepcionadoPor`, `responsable` (`.strict()` los rechaza con `400`). Solo los campos que cambian generan evento (`prioridad_cambiada` con `{de,a}` = **nombres** de la prioridad anterior/nueva, mismo criterio que `estado_cambiado`; `ticket_editado` para el resto). → `200 Detalle`.
 
 ### POST /tickets/:id/estado · tecnico (solo responsable actual)
 
@@ -629,7 +629,7 @@ Marca todas las no leídas del actor → `200 { data: null }`. No toca las de ot
 
 ## Eventos de auditoría (`eventos[].tipo` en el detalle de OT)
 
-`creado`, `estado_cambiado {de,a}`, `prioridad_cambiada {de,a}` (`de`/`a` = **uuid** de `Prioridad`, Fase C — antes el valor del enum), `derivado {de,a,motivo,mantuvoComoColaborador}`, `comentario {comentarioId,visibleCliente}`, `horas_registradas {horaId,usuarioId,fecha,horas}`, `horas_eliminadas {horaId,usuarioId,horas}`, `colaborador_agregado|colaborador_quitado {usuarioId}`, `etapa_creada|etapa_eliminada {etapaId}`, `etapa_editada {etapaId,campos}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `ot_editada {campos}`, `cotizacion_creada {cotizacionId,numero}` (Fase 2, solo si la cotización nació con `otId`), `cotizacion_vinculada {cotizacionId,numero}` (Fase 2), `cotizacion_estado_cambiado {cotizacionId,de,a}` (Fase 2, reflejo del evento que ya vive en el timeline de la cotización). Los payloads guardan ids, no copias de datos personales.
+`creado`, `estado_cambiado {de,a}`, `prioridad_cambiada {de,a}` (`de`/`a` = **nombres** de `Prioridad`, Fase C — antes el valor del enum), `derivado {de,a,motivo,mantuvoComoColaborador}`, `comentario {comentarioId,visibleCliente}`, `horas_registradas {horaId,usuarioId,fecha,horas}`, `horas_eliminadas {horaId,usuarioId,horas}`, `colaborador_agregado|colaborador_quitado {usuarioId}`, `etapa_creada|etapa_eliminada {etapaId}`, `etapa_editada {etapaId,campos}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `ot_editada {campos}`, `cotizacion_creada {cotizacionId,numero}` (Fase 2, solo si la cotización nació con `otId`), `cotizacion_vinculada {cotizacionId,numero}` (Fase 2), `cotizacion_estado_cambiado {cotizacionId,de,a}` (Fase 2, reflejo del evento que ya vive en el timeline de la cotización). Los payloads guardan ids, no copias de datos personales.
 
 ## Eventos de auditoría propios de una cotización (`eventos[].tipo` en `GET /cotizaciones/:id`)
 
@@ -637,7 +637,7 @@ Marca todas las no leídas del actor → `200 { data: null }`. No toca las de ot
 
 ## Eventos de auditoría de un ticket (`eventos[].tipo` en el detalle de ticket, Fase 3)
 
-`creado {numero,canal,recepcionadoPorId,clienteId}` (`canal` = nombre del `CanalTicket`, Fase C), `estado_cambiado {de,a}` (`de`/`a` = **nombres** de `EstadoTicket`, Fase C), `prioridad_cambiada {de,a}` (`de`/`a` = **uuid** de `Prioridad`, Fase C — antes el valor del enum), `ticket_editado {campos}`, `tomado {usuarioId}` (sin equivalente en OT: un ticket puede tomarse solo, una OT siempre nace con responsable), `derivado {de,a,motivo}` (sin `mantuvoComoColaborador`: el ticket no tiene colaboradores), `respuesta_cliente {mensajeId}`, `nota_interna {mensajeId}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `vinculado_ot {otId,otNumero,esOrigen}` (`esOrigen:true` si vino de `convertir-a-ot`, `false` si fue un vínculo manual), `ot_desvinculada {otId,otNumero}`.
+`creado {numero,canal,recepcionadoPorId,clienteId}` (`canal` = nombre del `CanalTicket`, Fase C), `estado_cambiado {de,a}` (`de`/`a` = **nombres** de `EstadoTicket`, Fase C), `prioridad_cambiada {de,a}` (`de`/`a` = **nombres** de `Prioridad`, Fase C — antes el valor del enum), `ticket_editado {campos}`, `tomado {usuarioId}` (sin equivalente en OT: un ticket puede tomarse solo, una OT siempre nace con responsable), `derivado {de,a,motivo}` (sin `mantuvoComoColaborador`: el ticket no tiene colaboradores), `respuesta_cliente {mensajeId}`, `nota_interna {mensajeId}`, `adjunto_agregado {adjuntoId,mime,tamanoBytes}`, `vinculado_ot {otId,otNumero,esOrigen}` (`esOrigen:true` si vino de `convertir-a-ot`, `false` si fue un vínculo manual), `ot_desvinculada {otId,otNumero}`.
 
 El evento `creado` de una **OT** nacida de una conversión (Fase 3) extiende el payload habitual con `origenTicketId`/`origenTicketNumero`, para componer "creada desde TK-000X por [actor]".
 
