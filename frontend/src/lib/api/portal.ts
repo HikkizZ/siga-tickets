@@ -3,7 +3,7 @@
 // dos, ninguna función de acá usa `apiClient` (JWT interno) — todas pasan por `publicApiClient`
 // (`/publico`, sin Authorization salvo `portalToken`).
 import { publicApiClient } from "./client";
-import type { EstadoOt, EstadoTicket, Prioridad } from "@/lib/labels";
+import type { EstadoOt } from "@/lib/labels";
 
 // El backend usa NoopCaptcha (docs/api.md, sección "Captcha"): aprueba cualquier `captchaToken`
 // no vacío. Todavía no hay un proveedor real (Turnstile/hCaptcha) del lado del backend, así que
@@ -12,13 +12,15 @@ const CAPTCHA_TOKEN_PLACEHOLDER = "portal-sin-captcha-real";
 
 // ---- POST /publico/tickets ----
 
+// Fase C: `prioridadId` ya no se pide en este formulario (decisión de diseño — GET /prioridades
+// exige sesión de staff, así que el cliente anónimo no puede elegir prioridad). El backend asigna
+// "Media" automáticamente cuando no se envía.
 export type CrearTicketPublicoInput = {
   nombre: string;
   correo: string;
   empresa?: string;
   asunto: string;
   descripcion: string;
-  prioridad?: Prioridad;
   archivos?: File[];
 };
 
@@ -29,7 +31,6 @@ export async function crearTicketPublico(input: CrearTicketPublicoInput): Promis
   if (input.empresa) formData.set("empresa", input.empresa);
   formData.set("asunto", input.asunto);
   formData.set("descripcion", input.descripcion);
-  if (input.prioridad) formData.set("prioridad", input.prioridad);
   formData.set("captchaToken", CAPTCHA_TOKEN_PLACEHOLDER);
   for (const archivo of input.archivos ?? []) {
     formData.append("adjuntos", archivo);
@@ -69,11 +70,13 @@ export type OtPublica = {
   responsableNombre: string;
 } | null;
 
+// Fase C: `estado` ya no es un enum fijo — es el nombre legible de la fila EstadoTicket actual
+// (docs/api.md, GET /publico/ticket), así que acá es un string simple.
 export type TicketPublico = {
   numero: string;
   asunto: string;
   descripcion: string;
-  estado: EstadoTicket;
+  estado: string;
   fechaIngreso: string;
   mensajes: MensajePublico[];
   ot: OtPublica;

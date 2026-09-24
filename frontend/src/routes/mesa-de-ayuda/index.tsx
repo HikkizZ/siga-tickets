@@ -5,9 +5,7 @@ import { PortalLayout } from "@/components/PortalLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { PRIORIDADES, etiquetaPrioridad, type Prioridad } from "@/lib/labels";
 import { useCrearTicketPublico } from "@/hooks/usePortal";
 
 export const Route = createFileRoute("/mesa-de-ayuda/")({
@@ -38,7 +36,6 @@ function MesaDeAyuda() {
   const [empresa, setEmpresa] = useState("");
   const [asunto, setAsunto] = useState("");
   const [descripcion, setDescripcion] = useState("");
-  const [prioridad, setPrioridad] = useState<Prioridad>("media");
   const [archivos, setArchivos] = useState<File[]>([]);
   const [numeroCreado, setNumeroCreado] = useState<string | null>(null);
   const inputArchivoRef = useRef<HTMLInputElement>(null);
@@ -98,7 +95,6 @@ function MesaDeAyuda() {
               ...(empresa.trim() ? { empresa: empresa.trim() } : {}),
               asunto: asunto.trim(),
               descripcion: descripcion.trim(),
-              prioridad,
               ...(archivos.length > 0 ? { archivos } : {}),
             });
             setNumeroCreado(resultado.numero);
@@ -144,21 +140,6 @@ function MesaDeAyuda() {
               onChange={(e) => setEmpresa(e.target.value)}
               className="h-10"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Urgencia sugerida</Label>
-            <Select value={prioridad} onValueChange={(v) => setPrioridad(v as Prioridad)}>
-              <SelectTrigger className="h-10 text-sm">
-                <span>{etiquetaPrioridad(prioridad)}</span>
-              </SelectTrigger>
-              <SelectContent>
-                {PRIORIDADES.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {etiquetaPrioridad(p)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="asunto" className="text-xs">

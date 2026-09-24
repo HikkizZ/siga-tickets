@@ -3,15 +3,17 @@
 // que src/lib/api/dashboard.ts — sin React ni TanStack Query acá, eso vive en
 // src/hooks/useBuscar.ts.
 import { apiClient } from "./client";
-import type { EstadoCotizacion, EstadoOt, EstadoTicket } from "@/lib/labels";
+import type { EstadoCotizacion, EstadoOt } from "@/lib/labels";
 
 export type ResultadoBusquedaOt = { tipo: "ot"; id: string; numero: string; titulo: string; estado: EstadoOt };
+// Fase C: ticket.estado ya no es un enum fijo — buscar.service.ts hace JOIN a estado_ticket y
+// devuelve directamente el nombre legible (p. ej. "Abierto"), así que acá es un string simple.
 export type ResultadoBusquedaTicket = {
   tipo: "ticket";
   id: string;
   numero: string;
   asunto: string;
-  estado: EstadoTicket;
+  estado: string;
 };
 export type ResultadoBusquedaCotizacion = {
   tipo: "cotizacion";

@@ -5,9 +5,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { Avatar, PrioridadBadge, SlaBadge } from "@/components/Prioridad";
 import { cn, inicialesDeNombre } from "@/lib/utils";
 import { formatoFecha } from "@/lib/mock-data";
-import { PRIORIDADES } from "@/lib/labels";
 import { useOTStore } from "@/lib/ot-store";
 import { useOts } from "@/hooks/useOts";
+import { usePrioridades } from "@/hooks/usePrioridades";
 import type { OtListItem } from "@/lib/api/ots";
 
 export const Route = createFileRoute("/linea-de-tiempo")({
@@ -89,6 +89,7 @@ function LineaDeTiempo() {
   // resto de las listas reales de la app); si algún día no alcanza, hace falta un endpoint propio
   // en vez de subir este número indefinidamente.
   const { data, isLoading } = useOts({ perPage: 100 });
+  const { data: prioridades } = usePrioridades();
   const items = useMemo(() => (data?.items ?? []).filter(tieneRango), [data]);
 
   const hoy = new Date().getTime();
@@ -226,9 +227,11 @@ function LineaDeTiempo() {
         </span>
         <span className="ml-2 flex items-center gap-2">
           Prioridades:{" "}
-          {PRIORIDADES.map((p) => (
-            <PrioridadBadge key={p} prioridad={p} />
-          ))}
+          {(prioridades ?? [])
+            .filter((p) => p.activo)
+            .map((p) => (
+              <PrioridadBadge key={p.id} prioridad={p.nombre} />
+            ))}
         </span>
       </div>
     </div>

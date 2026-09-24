@@ -8,9 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { formatoFecha } from "@/lib/mock-data";
-import { ESTADOS_TICKET, PRIORIDADES, etiquetaCanalTicket, etiquetaEstadoTicket, etiquetaPrioridad, type CanalTicket } from "@/lib/labels";
 import { useTickets } from "@/hooks/useTickets";
+import { useEstadosTicket } from "@/hooks/useEstadosTicket";
+import { useFuentesTicket } from "@/hooks/useFuentesTicket";
+import { usePrioridades } from "@/hooks/usePrioridades";
 import type { TicketsFiltros } from "@/lib/api/tickets";
+import type { CanalTicketRef } from "@/lib/api/ots";
 import { useOTStore } from "@/lib/ot-store";
 import { useUsuarios } from "@/hooks/useUsuarios";
 import { useDebounced } from "@/hooks/useDebounced";
@@ -39,52 +42,53 @@ export const Route = createFileRoute("/tickets")({
 const TODOS = "__todos__";
 const PER_PAGE = 25;
 
-// Todos los canales (a diferencia del formulario de creación, el filtro sí muestra los 5 —
-// puede haber tickets del portal o de correo de fases futuras).
-const CANALES_FILTRO: readonly CanalTicket[] = ["portal", "correo", "telefono", "presencial", "interno"];
-const iconosCanal: Record<CanalTicket, typeof Mail> = {
-  portal: Inbox,
-  correo: Mail,
-  telefono: Phone,
-  presencial: Handshake,
-  interno: Users,
+// Fase C: CanalTicket ya no es un enum fijo de 5 valores — es un catálogo administrable
+// (docs/api.md), así que ya no se puede indexar exhaustivamente. Los 5 canales sembrados
+// mantienen su ícono; cualquier fuente nueva que cree el admin cae al ícono genérico. Mismo
+// criterio que iconosCanal de src/components/TicketDetail.tsx.
+const iconosCanal: Record<string, typeof Mail> = {
+  Portal: Inbox,
+  Correo: Mail,
+  Teléfono: Phone,
+  Presencial: Handshake,
+  Interno: Users,
 };
 
-function CanalBadgeReal({ canal }: { canal: CanalTicket }) {
-  const Icono = iconosCanal[canal];
+function CanalBadgeReal({ canal }: { canal: CanalTicketRef }) {
+  const Icono = iconosCanal[canal.nombre] ?? Mail;
   return (
     <span className="inline-flex items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
       <Icono className="size-3" />
-      {etiquetaCanalTicket(canal)}
+      {canal.nombre}
     </span>
   );
 }
 
-function Filtro<T extends string>({
+// Fase C: Estado/Canal/Prioridad de ticket pasaron de enums fijos a catálogos `{id, nombre}`
+// (docs/api.md) — el filtro ahora se arma sobre el id de la fila, no sobre un valor de enum.
+function FiltroCatalogo({
   valor,
   onChange,
   opciones,
   etiqueta,
-  etiquetaOpcion,
 }: {
   valor: string;
   onChange: (v: string) => void;
-  opciones: readonly T[];
+  opciones: readonly { id: string; nombre: string }[];
   etiqueta: string;
-  etiquetaOpcion: (o: T) => string;
 }) {
   return (
     <Select value={valor} onValueChange={onChange}>
       <SelectTrigger className="h-9 w-full text-xs sm:w-44">
         <span className={cn(valor === TODOS && "text-muted-foreground")}>
-          {valor === TODOS ? etiqueta : etiquetaOpcion(valor as T)}
+          {valor === TODOS ? etiqueta : (opciones.find((o) => o.id === valor)?.nombre ?? etiqueta)}
         </span>
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={TODOS}>{etiqueta}</SelectItem>
         {opciones.map((o) => (
-          <SelectItem key={o} value={o}>
-            {etiquetaOpcion(o)}
+          <SelectItem key={o.id} value={o.id}>
+            {o.nombre}
           </SelectItem>
         ))}
       </SelectContent>
@@ -95,10 +99,13 @@ function Filtro<T extends string>({
 function Tickets() {
   const { ticketAbierto, abrirTicket } = useOTStore();
   const { data: usuarios } = useUsuarios();
+  const { data: estadosTicket } = useEstadosTicket();
+  const { data: fuentesTicket } = useFuentesTicket();
+  const { data: prioridades } = usePrioridades();
   const [texto, setTexto] = useState("");
-  const [estado, setEstado] = useState(TODOS);
-  const [canal, setCanal] = useState(TODOS);
-  const [prioridad, setPrioridad] = useState(TODOS);
+  const [estadoId, setEstadoId] = useState(TODOS);
+  const [canalId, setCanalId] = useState(TODOS);
+  const [prioridadId, setPrioridadId] = useState(TODOS);
   const [responsable, setResponsable] = useState(TODOS);
   const [misAsignados, setMisAsignados] = useState(false);
   const [sinAsignar, setSinAsignar] = useState(false);
@@ -110,19 +117,19 @@ function Tickets() {
     texto !== "" ||
     misAsignados ||
     sinAsignar ||
-    [estado, canal, prioridad, responsable].some((f) => f !== TODOS);
+    [estadoId, canalId, prioridadId, responsable].some((f) => f !== TODOS);
 
   useEffect(() => {
     setPage(1);
-  }, [textoDebounced, estado, canal, prioridad, responsable, misAsignados, sinAsignar]);
+  }, [textoDebounced, estadoId, canalId, prioridadId, responsable, misAsignados, sinAsignar]);
 
   const filtros: TicketsFiltros = {
     page,
     perPage: PER_PAGE,
     q: textoDebounced.trim() || undefined,
-    estado: estado === TODOS ? undefined : (estado as TicketsFiltros["estado"]),
-    canal: canal === TODOS ? undefined : (canal as TicketsFiltros["canal"]),
-    prioridad: prioridad === TODOS ? undefined : (prioridad as TicketsFiltros["prioridad"]),
+    estadoId: estadoId === TODOS ? undefined : estadoId,
+    canalId: canalId === TODOS ? undefined : canalId,
+    prioridadId: prioridadId === TODOS ? undefined : prioridadId,
     responsable: responsable === TODOS ? undefined : responsable,
     mios: misAsignados || undefined,
     sinAsignar: sinAsignar || undefined,
@@ -161,9 +168,9 @@ function Tickets() {
             className="h-9 pl-9 text-sm"
           />
         </div>
-        <Filtro valor={estado} onChange={setEstado} opciones={ESTADOS_TICKET} etiqueta="Todos los estados" etiquetaOpcion={etiquetaEstadoTicket} />
-        <Filtro valor={canal} onChange={setCanal} opciones={CANALES_FILTRO} etiqueta="Todos los canales" etiquetaOpcion={etiquetaCanalTicket} />
-        <Filtro valor={prioridad} onChange={setPrioridad} opciones={PRIORIDADES} etiqueta="Toda prioridad" etiquetaOpcion={etiquetaPrioridad} />
+        <FiltroCatalogo valor={estadoId} onChange={setEstadoId} opciones={estadosTicket ?? []} etiqueta="Todos los estados" />
+        <FiltroCatalogo valor={canalId} onChange={setCanalId} opciones={fuentesTicket ?? []} etiqueta="Todos los canales" />
+        <FiltroCatalogo valor={prioridadId} onChange={setPrioridadId} opciones={prioridades ?? []} etiqueta="Toda prioridad" />
         <Select value={responsable} onValueChange={setResponsable}>
           <SelectTrigger className="h-9 w-full text-xs sm:w-48">
             <span className={cn(responsable === TODOS && "text-muted-foreground")}>
@@ -199,9 +206,9 @@ function Tickets() {
             className="h-9"
             onClick={() => {
               setTexto("");
-              setEstado(TODOS);
-              setCanal(TODOS);
-              setPrioridad(TODOS);
+              setEstadoId(TODOS);
+              setCanalId(TODOS);
+              setPrioridadId(TODOS);
               setResponsable(TODOS);
               setMisAsignados(false);
               setSinAsignar(false);
@@ -234,17 +241,21 @@ function Tickets() {
               key={t.id}
               className={cn(
                 "cursor-pointer px-5 py-4 transition-colors hover:bg-accent/40",
-                t.estado === "nuevo" && "border-l-2 border-l-primary bg-primary/5",
+                // Fase C: EstadoTicket ya no es un enum fijo — se compara por el nombre exacto de la
+                // fila sembrada ("Nuevo"), mismo criterio que estadoEsperandoCliente en
+                // TicketConversacion.tsx: si un admin la renombra, este resaltado simplemente deja
+                // de aplicarse (nada roto, sigue siendo un ticket normal de la lista).
+                t.estado.nombre === "Nuevo" && "border-l-2 border-l-primary bg-primary/5",
               )}
               onClick={() => abrirTicket(t.id)}
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-[11px] text-muted-foreground">{t.numero}</span>
-                <h2 className={cn("text-sm", t.estado === "nuevo" ? "font-semibold" : "font-medium")}>{t.asunto}</h2>
+                <h2 className={cn("text-sm", t.estado.nombre === "Nuevo" ? "font-semibold" : "font-medium")}>{t.asunto}</h2>
                 <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                  {etiquetaEstadoTicket(t.estado)}
+                  {t.estado.nombre}
                 </span>
-                <PrioridadBadge prioridad={t.prioridad} />
+                <PrioridadBadge prioridad={t.prioridad.nombre} />
                 <CanalBadgeReal canal={t.canal} />
                 <SlaBadge nivel={t.slaEstado} />
                 <span className="ml-auto flex items-center gap-3">

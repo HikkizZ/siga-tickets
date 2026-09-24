@@ -13,6 +13,7 @@ import {
   useCambiarEstadoTicket,
   useSubirAdjuntoTicket,
 } from "@/hooks/useTickets";
+import { useEstadosTicket } from "@/hooks/useEstadosTicket";
 
 /** Hilo de mensajes + compositor de respuesta, el elemento central del detalle de ticket
  * (Fase E1) — inspirado en cómo osTicket/Zendesk/Freshdesk ponen la conversación primero y el
@@ -23,6 +24,12 @@ export function TicketConversacion({ ticket }: { ticket: TicketDetalle }) {
   const agregarMensaje = useAgregarMensajeTicket();
   const subirAdjunto = useSubirAdjuntoTicket();
   const cambiarEstado = useCambiarEstadoTicket();
+  const { data: estadosTicket } = useEstadosTicket();
+  // Fase C: EstadoTicket ya no es un enum fijo, así que el atajo "Esperando cliente" busca la fila
+  // sembrada con ese nombre exacto en el catálogo — si un admin la renombra o la desactiva, el
+  // atajo simplemente desaparece (nada roto: sigue siendo posible cambiar el estado desde el
+  // selector de TicketMetadatos).
+  const estadoEsperandoCliente = (estadosTicket ?? []).find((e) => e.activo && e.nombre === "Esperando cliente");
 
   const [texto, setTexto] = useState("");
   const [interna, setInterna] = useState(false);
@@ -174,15 +181,17 @@ export function TicketConversacion({ ticket }: { ticket: TicketDetalle }) {
           <Button type="submit" size="sm" className="h-9" disabled={agregarMensaje.isPending}>
             <Send className="size-4" /> {interna ? "Guardar nota" : "Enviar respuesta"}
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-9"
-            onClick={() => cambiarEstado.mutate({ id: ticket.id, estado: "esperando_cliente" })}
-          >
-            Marcar "Esperando cliente"
-          </Button>
+          {estadoEsperandoCliente && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-9"
+              onClick={() => cambiarEstado.mutate({ id: ticket.id, estadoId: estadoEsperandoCliente.id })}
+            >
+              Marcar "Esperando cliente"
+            </Button>
+          )}
         </div>
       </form>
     </section>

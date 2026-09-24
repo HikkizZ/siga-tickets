@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { Switch } from "@/components/ui/switch";
 import { useDepartamentos } from "@/hooks/useDepartamentos";
 import { useActualizarTemaAyuda, useCrearTemaAyuda, useTemasAyuda } from "@/hooks/useTemasAyuda";
-import { PRIORIDADES, etiquetaPrioridad, type Prioridad } from "@/lib/labels";
+import { usePrioridades } from "@/hooks/usePrioridades";
 import type { TemaAyuda } from "@/lib/api/temasAyuda";
 
 // Sentinel para "sin departamento" / "sin prioridad sugerida" en los <Select> (Radix no admite
@@ -22,18 +22,19 @@ const SIN_PRIORIDAD = "__sin_prioridad__";
 type FormularioTema = {
   nombre: string;
   departamentoId: string;
-  prioridadSugerida: Prioridad | "";
+  // Fase C: prioridadSugerida pasó de valor de enum a uuid de una fila del catálogo Prioridad.
+  prioridadSugeridaId: string;
   esPublico: boolean;
   orden: string;
 };
 
-const FORM_VACIO: FormularioTema = { nombre: "", departamentoId: "", prioridadSugerida: "", esPublico: true, orden: "0" };
+const FORM_VACIO: FormularioTema = { nombre: "", departamentoId: "", prioridadSugeridaId: "", esPublico: true, orden: "0" };
 
 function aFormulario(tema: TemaAyuda): FormularioTema {
   return {
     nombre: tema.nombre,
     departamentoId: tema.departamento?.id ?? "",
-    prioridadSugerida: tema.prioridadSugerida ?? "",
+    prioridadSugeridaId: tema.prioridadSugerida?.id ?? "",
     esPublico: tema.esPublico,
     orden: String(tema.orden),
   };
@@ -42,6 +43,7 @@ function aFormulario(tema: TemaAyuda): FormularioTema {
 export function SeccionTemasAyuda({ puedeEscribir }: { puedeEscribir: boolean }) {
   const { data: temas, isLoading, isError } = useTemasAyuda();
   const { data: departamentos } = useDepartamentos();
+  const { data: prioridades } = usePrioridades();
   const crear = useCrearTemaAyuda();
   const actualizar = useActualizarTemaAyuda();
 
@@ -70,7 +72,7 @@ export function SeccionTemasAyuda({ puedeEscribir }: { puedeEscribir: boolean })
             esPublico: form.esPublico,
             orden,
             departamentoId: form.departamentoId || null,
-            prioridadSugerida: form.prioridadSugerida || null,
+            prioridadSugeridaId: form.prioridadSugeridaId || null,
           },
         },
         { onSuccess: cancelar },
@@ -82,7 +84,7 @@ export function SeccionTemasAyuda({ puedeEscribir }: { puedeEscribir: boolean })
           esPublico: form.esPublico,
           orden,
           ...(form.departamentoId ? { departamentoId: form.departamentoId } : {}),
-          ...(form.prioridadSugerida ? { prioridadSugerida: form.prioridadSugerida } : {}),
+          ...(form.prioridadSugeridaId ? { prioridadSugeridaId: form.prioridadSugeridaId } : {}),
         },
         { onSuccess: cancelar },
       );
@@ -140,9 +142,7 @@ export function SeccionTemasAyuda({ puedeEscribir }: { puedeEscribir: boolean })
               <tr key={t.id} className="border-b border-border/70 last:border-0">
                 <td className="px-4 py-3">{t.nombre}</td>
                 <td className="px-4 py-3 text-muted-foreground">{t.departamento?.nombre ?? "—"}</td>
-                <td className="px-4 py-3 text-muted-foreground">
-                  {t.prioridadSugerida ? etiquetaPrioridad(t.prioridadSugerida) : "—"}
-                </td>
+                <td className="px-4 py-3 text-muted-foreground">{t.prioridadSugerida?.nombre ?? "—"}</td>
                 <td className="px-4 py-3 text-muted-foreground">{t.esPublico ? "Sí" : "Interno"}</td>
                 <td className="px-4 py-3 font-mono text-xs">{t.orden}</td>
                 <td className="px-4 py-3">
@@ -220,19 +220,23 @@ export function SeccionTemasAyuda({ puedeEscribir }: { puedeEscribir: boolean })
             <div className="space-y-1.5">
               <Label className="text-xs">Prioridad sugerida</Label>
               <Select
-                value={form.prioridadSugerida || SIN_PRIORIDAD}
+                value={form.prioridadSugeridaId || SIN_PRIORIDAD}
                 onValueChange={(v) =>
-                  setForm((prev) => ({ ...prev, prioridadSugerida: v === SIN_PRIORIDAD ? "" : (v as Prioridad) }))
+                  setForm((prev) => ({ ...prev, prioridadSugeridaId: v === SIN_PRIORIDAD ? "" : v }))
                 }
               >
                 <SelectTrigger className="h-9 text-sm">
-                  <span>{form.prioridadSugerida ? etiquetaPrioridad(form.prioridadSugerida) : "Sin sugerencia"}</span>
+                  <span>
+                    {form.prioridadSugeridaId
+                      ? (prioridades ?? []).find((p) => p.id === form.prioridadSugeridaId)?.nombre ?? "—"
+                      : "Sin sugerencia"}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={SIN_PRIORIDAD}>Sin sugerencia</SelectItem>
-                  {PRIORIDADES.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {etiquetaPrioridad(p)}
+                  {(prioridades ?? []).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.nombre}
                     </SelectItem>
                   ))}
                 </SelectContent>

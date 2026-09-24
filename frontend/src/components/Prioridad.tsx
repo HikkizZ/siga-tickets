@@ -1,6 +1,6 @@
 import { AlertTriangle, Clock, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { etiquetaEstadoCotizacion, etiquetaPrioridad, etiquetaSlaEstado } from "@/lib/labels";
+import { etiquetaEstadoCotizacion, etiquetaSlaEstado } from "@/lib/labels";
 
 // Estos tres badges reciben tanto valores del mock ("Alta", "En plazo", "Borrador" — tickets,
 // cotizaciones y dashboard, todavía fuera de la Fase 1) como del backend real ("alta", "en_plazo",
@@ -46,9 +46,10 @@ const estilosPrioridad: Record<string, string> = {
   baja: "bg-baja-suave text-baja border-baja/25",
 };
 
+// Fase C: `prioridad` ya viene como el nombre legible del catálogo (p. ej. "Alta") directamente
+// desde el backend — ya no hay ningún traductor de enum que pasar antes de mostrarlo.
 export function PrioridadBadge({ prioridad, className }: { prioridad: string; className?: string }) {
   const clave = normalizar(prioridad);
-  const etiqueta = etiquetaPrioridad(clave as Parameters<typeof etiquetaPrioridad>[0]);
   return (
     <span
       className={cn(
@@ -58,7 +59,7 @@ export function PrioridadBadge({ prioridad, className }: { prioridad: string; cl
       )}
     >
       <span className="size-1.5 rounded-full bg-current" />
-      {etiqueta}
+      {prioridad}
     </span>
   );
 }

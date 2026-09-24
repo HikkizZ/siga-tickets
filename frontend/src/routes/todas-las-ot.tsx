@@ -7,12 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Avatar, PrioridadBadge, SlaBadge } from "@/components/Prioridad";
 import { cn, inicialesDeNombre } from "@/lib/utils";
 import { formatoFecha } from "@/lib/mock-data";
-import { PRIORIDADES, etiquetaEstadoOt, etiquetaPrioridad } from "@/lib/labels";
+import { etiquetaEstadoOt } from "@/lib/labels";
 import { useOts } from "@/hooks/useOts";
 import type { OtsFiltros } from "@/lib/api/ots";
 import { useOTStore } from "@/lib/ot-store";
 import { useUsuarios } from "@/hooks/useUsuarios";
 import { useClientes } from "@/hooks/useClientes";
+import { usePrioridades } from "@/hooks/usePrioridades";
 import { useDebounced } from "@/hooks/useDebounced";
 
 export const Route = createFileRoute("/todas-las-ot")({
@@ -76,6 +77,7 @@ function TodasLasOT() {
   const textoDebounced = useDebounced(texto);
   const { data: usuarios } = useUsuarios();
   const { data: clientes } = useClientes();
+  const { data: prioridades } = usePrioridades();
 
   // Cambiar cualquier filtro u orden vuelve a la página 1 — si no, se podría quedar en una
   // página fuera de rango del nuevo resultado.
@@ -89,7 +91,7 @@ function TodasLasOT() {
     orden: ordenPorColumna[orden.col] ?? "fechaIngreso",
     dir: orden.asc ? "asc" : "desc",
     q: textoDebounced.trim() || undefined,
-    prioridad: prioridad === "todas" ? undefined : (prioridad as (typeof PRIORIDADES)[number]),
+    prioridadId: prioridad === "todas" ? undefined : prioridad,
     responsableId: responsable === "todos" ? undefined : responsable,
     clienteId: cliente === "todos" ? undefined : cliente,
     mios: misAsignados || undefined,
@@ -126,13 +128,13 @@ function TodasLasOT() {
         </div>
         <Select value={prioridad} onValueChange={setPrioridad}>
           <SelectTrigger className="h-9 w-36 text-sm">
-            <span>{prioridad === "todas" ? "Prioridad" : etiquetaPrioridad(prioridad as (typeof PRIORIDADES)[number])}</span>
+            <span>{prioridad === "todas" ? "Prioridad" : (prioridades ?? []).find((p) => p.id === prioridad)?.nombre ?? "Prioridad"}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todas">Toda prioridad</SelectItem>
-            {PRIORIDADES.map((p) => (
-              <SelectItem key={p} value={p}>
-                {etiquetaPrioridad(p)}
+            {(prioridades ?? []).map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.nombre}
               </SelectItem>
             ))}
           </SelectContent>
@@ -225,7 +227,7 @@ function TodasLasOT() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <PrioridadBadge prioridad={ot.prioridad} />
+                    <PrioridadBadge prioridad={ot.prioridad.nombre} />
                   </td>
                   <td className="px-4 py-3">
                     <span className="flex items-center gap-2">

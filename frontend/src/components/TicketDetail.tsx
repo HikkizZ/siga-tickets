@@ -9,25 +9,29 @@ import { TicketExtras } from "@/components/ticket-detail/TicketExtras";
 import { DialogoConvertirEnOT, DialogoVincularOT } from "@/components/ticket-detail/TicketDialogos";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { etiquetaCanalTicket, puedeConvertirTickets, type CanalTicket } from "@/lib/labels";
+import { puedeConvertirTickets } from "@/lib/labels";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useUsuarios } from "@/hooks/useUsuarios";
 import { useConvertirTicketAOt, useDerivarTicket, useTicket, useVincularOtATicket } from "@/hooks/useTickets";
+import type { CanalTicketRef } from "@/lib/api/ots";
 
-const iconosCanal: Record<CanalTicket, typeof Mail> = {
-  portal: Inbox,
-  correo: Mail,
-  telefono: Phone,
-  presencial: Handshake,
-  interno: Users,
+// Fase C: CanalTicket ya no es un enum fijo de 5 valores — es un catálogo administrable
+// (docs/api.md), así que ya no se puede indexar exhaustivamente por nombre. Los 5 canales
+// sembrados mantienen su ícono; cualquier fuente nueva que cree el admin cae al ícono genérico.
+const iconosCanal: Record<string, typeof Mail> = {
+  Portal: Inbox,
+  Correo: Mail,
+  Teléfono: Phone,
+  Presencial: Handshake,
+  Interno: Users,
 };
 
-function CanalBadgeReal({ canal }: { canal: CanalTicket }) {
-  const Icono = iconosCanal[canal];
+function CanalBadgeReal({ canal }: { canal: CanalTicketRef }) {
+  const Icono = iconosCanal[canal.nombre] ?? Mail;
   return (
     <span className="inline-flex items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
       <Icono className="size-3" />
-      {etiquetaCanalTicket(canal)}
+      {canal.nombre}
     </span>
   );
 }
@@ -77,8 +81,8 @@ export function TicketDetail({ ticketId, onClose }: { ticketId: string | null; o
               <SheetHeader className="space-y-1.5 border-b border-border px-6 py-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{ticket.numero}</span>
-                  <EstadoTicketBadge estado={ticket.estado} />
-                  <PrioridadBadge prioridad={ticket.prioridad} />
+                  <EstadoTicketBadge estado={ticket.estado.nombre} />
+                  <PrioridadBadge prioridad={ticket.prioridad.nombre} />
                   <CanalBadgeReal canal={ticket.canal} />
                   <SlaBadge nivel={ticket.slaEstado} />
                 </div>

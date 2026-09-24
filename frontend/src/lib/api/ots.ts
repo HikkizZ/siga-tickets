@@ -3,10 +3,18 @@
 // src/lib/api/usuarios.ts / clientes.ts de la Fase 0.
 import { apiClient } from "./client";
 import { getToken } from "@/lib/auth/token";
-import type { CategoriaOt, EstadoOt, OrigenOt, Prioridad } from "@/lib/labels";
+import type { CategoriaOt, EstadoOt, OrigenOt } from "@/lib/labels";
 
 export type UsuarioRef = { id: string; nombre: string };
 export type ClienteRef = { id: string; nombre: string } | null;
+
+// Fase C: Prioridad (compartida por OT y Ticket) y EstadoTicket/CanalTicket (Ticket) dejaron de
+// ser enums fijos y pasan a catálogos administrables — se exponen como `{id, nombre}`, igual que
+// cliente/responsable. Se definen acá (no en tickets.ts) porque OtDetalle.tickets (TicketEmbebido,
+// más abajo) también los necesita, y tickets.ts ya importa de este archivo.
+export type PrioridadRef = { id: string; nombre: string };
+export type EstadoTicketRef = { id: string; nombre: string };
+export type CanalTicketRef = { id: string; nombre: string };
 
 // ---- Listado (GET /ots) ----
 
@@ -18,7 +26,7 @@ export type OtListItem = {
   areaInterna: string | null;
   esInterna: boolean;
   categoria: CategoriaOt;
-  prioridad: Prioridad;
+  prioridad: PrioridadRef;
   origen: OrigenOt;
   estado: EstadoOt;
   solicitanteNombre: string | null;
@@ -43,7 +51,7 @@ export type OtsFiltros = {
     | undefined;
   dir?: "asc" | "desc" | undefined;
   estado?: EstadoOt | undefined;
-  prioridad?: Prioridad | undefined;
+  prioridadId?: string | undefined;
   categoria?: CategoriaOt | undefined;
   clienteId?: string | undefined;
   responsableId?: string | undefined;
@@ -82,7 +90,7 @@ export type OtKanbanItem = {
   titulo: string;
   cliente: ClienteRef;
   areaInterna: string | null;
-  prioridad: Prioridad;
+  prioridad: PrioridadRef;
   responsable: UsuarioRef;
   colaboradores: { items: UsuarioRef[]; total: number };
   fechaEstimadaTermino: string | null;
@@ -92,7 +100,7 @@ export type OtKanbanItem = {
 
 export type OtKanbanColumna = { estado: EstadoOt; total: number; ots: OtKanbanItem[] };
 
-export type OtsKanbanFiltros = Pick<OtsFiltros, "prioridad" | "categoria" | "clienteId" | "responsableId" | "mios" | "q" | "desde" | "hasta">;
+export type OtsKanbanFiltros = Pick<OtsFiltros, "prioridadId" | "categoria" | "clienteId" | "responsableId" | "mios" | "q" | "desde" | "hasta">;
 
 export async function obtenerOtsKanban(filtros?: OtsKanbanFiltros): Promise<OtKanbanColumna[]> {
   const { data } = await apiClient.get<OtKanbanColumna[]>(`/ots/kanban${aQueryString(filtros)}`);
@@ -144,8 +152,8 @@ export type TicketEmbebido = {
   id: string;
   numero: string;
   asunto: string;
-  estado: string;
-  canal: string;
+  estado: EstadoTicketRef;
+  canal: CanalTicketRef;
   esOrigen: boolean;
 };
 
@@ -155,7 +163,7 @@ export type OtDetalle = {
   titulo: string;
   descripcion: string;
   estado: EstadoOt;
-  prioridad: Prioridad;
+  prioridad: PrioridadRef;
   categoria: CategoriaOt;
   origen: OrigenOt;
   esInterna: boolean;
@@ -195,7 +203,7 @@ export type CrearOtInput = {
   titulo: string;
   descripcion: string;
   categoria: CategoriaOt;
-  prioridad: Prioridad;
+  prioridadId: string;
   origen: OrigenOt;
   ubicacion?: string;
   solicitanteNombre?: string;
@@ -216,7 +224,7 @@ export type ActualizarOtInput = Partial<{
   titulo: string;
   descripcion: string;
   categoria: CategoriaOt;
-  prioridad: Prioridad;
+  prioridadId: string;
   ubicacion: string | null;
   solicitanteNombre: string | null;
   solicitanteContacto: string | null;

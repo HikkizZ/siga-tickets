@@ -1,35 +1,11 @@
 // Funciones de red puras para SLA (docs/api.md, sección "SLA y notificaciones (Fase 4)"):
-// configuración por prioridad y feriados. Mismo patrón que src/lib/api/ots.ts /
-// src/lib/api/cotizaciones.ts — sin React ni TanStack Query acá, eso vive en src/hooks/useSla.ts.
+// feriados. Mismo patrón que src/lib/api/ots.ts / src/lib/api/cotizaciones.ts — sin React ni
+// TanStack Query acá, eso vive en src/hooks/useSla.ts.
+//
+// Fase C: GET/PUT /sla/config (configuración de SLA por prioridad, 3 filas fijas) se retiró por
+// completo — `Prioridad.planSlaId` (src/lib/api/prioridades.ts) conecta cada prioridad a un Plan
+// SLA (src/lib/api/planesSla.ts), que pasa a ser el único sistema real de cálculo de SLA.
 import { apiClient } from "./client";
-import type { Prioridad } from "@/lib/labels";
-
-// ---- Configuración por prioridad (GET/PUT /sla/config) ----
-
-export type SlaConfigFila = {
-  prioridad: Prioridad;
-  horasResolucion: number;
-  horasPrimeraRespuesta: number;
-  usarHorasHabiles: boolean;
-  pausarEnEsperaCliente: boolean;
-  umbralPorVencer: number;
-};
-
-export async function obtenerSlaConfig(): Promise<SlaConfigFila[]> {
-  const { data } = await apiClient.get<SlaConfigFila[]>("/sla/config");
-  return data;
-}
-
-// PUT /sla/config: 1 a 3 filas, sin repetir prioridad; todos los campos opcionales salvo
-// `prioridad` (solo se actualiza lo enviado en cada fila).
-export type ActualizarSlaConfigFila = { prioridad: Prioridad } & Partial<
-  Omit<SlaConfigFila, "prioridad">
->;
-
-export async function actualizarSlaConfig(configs: ActualizarSlaConfigFila[]): Promise<SlaConfigFila[]> {
-  const { data } = await apiClient.put<SlaConfigFila[]>("/sla/config", { configs });
-  return data;
-}
 
 // ---- Feriados (GET/POST/DELETE /sla/feriados) ----
 

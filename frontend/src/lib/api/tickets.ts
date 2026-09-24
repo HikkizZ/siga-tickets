@@ -3,8 +3,8 @@
 // y `UsuarioRef` se reutilizan de ots.ts: el ticket real trae `cadenaResponsables` con la misma
 // forma exacta que la OT (docs/api.md lo confirma).
 import { apiClient } from "./client";
-import type { CanalTicket, CategoriaOt, EstadoTicket, Prioridad } from "@/lib/labels";
-import type { OtDetalle, TramoResponsable, UsuarioRef } from "./ots";
+import type { CategoriaOt } from "@/lib/labels";
+import type { CanalTicketRef, EstadoTicketRef, OtDetalle, PrioridadRef, TramoResponsable, UsuarioRef } from "./ots";
 
 export type ClienteRefTicket = { id: string; nombre: string } | null;
 
@@ -14,9 +14,9 @@ export type TicketResumen = {
   id: string;
   numero: string;
   asunto: string;
-  canal: CanalTicket;
-  prioridad: Prioridad;
-  estado: EstadoTicket;
+  canal: CanalTicketRef;
+  prioridad: PrioridadRef;
+  estado: EstadoTicketRef;
   cliente: ClienteRefTicket;
   solicitanteNombre: string | null;
   responsable: UsuarioRef | null;
@@ -29,9 +29,9 @@ export type TicketsFiltros = {
   perPage?: number | undefined;
   orden?: "numero" | "asunto" | "estado" | "prioridad" | "fechaIngreso" | "creadoEn" | "actualizadoEn" | undefined;
   dir?: "asc" | "desc" | undefined;
-  estado?: EstadoTicket | undefined;
-  prioridad?: Prioridad | undefined;
-  canal?: CanalTicket | undefined;
+  estadoId?: string | undefined;
+  prioridadId?: string | undefined;
+  canalId?: string | undefined;
   responsable?: string | undefined;
   mios?: boolean | undefined;
   sinAsignar?: boolean | undefined;
@@ -106,9 +106,9 @@ export type TicketDetalle = {
   solicitanteEmpresa: string | null;
   cliente: ClienteRefTicket;
   temaAyuda: TemaAyudaRefTicket;
-  canal: CanalTicket;
-  prioridad: Prioridad;
-  estado: EstadoTicket;
+  canal: CanalTicketRef;
+  prioridad: PrioridadRef;
+  estado: EstadoTicketRef;
   fechaIngreso: string;
   recepcionadoPor: UsuarioRef;
   responsable: UsuarioRef | null;
@@ -134,10 +134,6 @@ export async function obtenerTicket(id: string): Promise<TicketDetalle> {
 
 // ---- Crear (POST /tickets) ----
 
-// canal solo acepta estos 3 valores en la creación manual (docs/api.md, POST /tickets); portal e
-// interno... digo, portal/correo son de fases futuras (portal público e ingesta de correo).
-export type CanalTicketCreacion = Extract<CanalTicket, "telefono" | "presencial" | "interno">;
-
 export type CrearTicketInput = {
   asunto: string;
   descripcion: string;
@@ -145,8 +141,10 @@ export type CrearTicketInput = {
   solicitanteEmail: string;
   solicitanteTelefono?: string;
   clienteId?: string;
-  canal: CanalTicketCreacion;
-  prioridad: Prioridad;
+  // Fase C: uuid de una fila existente, activa y con `esManual: true` del catálogo CanalTicket
+  // (docs/api.md, POST /tickets) — antes un valor fijo de enum.
+  canalId: string;
+  prioridadId: string;
   // Tema de ayuda opcional (Fase B1): solo se guarda, sin ningún efecto automático sobre
   // prioridad, SLA ni categoría (docs/api.md).
   temaAyudaId?: string;
@@ -162,7 +160,7 @@ export async function crearTicket(input: CrearTicketInput): Promise<TicketDetall
 export type ActualizarTicketInput = Partial<{
   asunto: string;
   descripcion: string;
-  prioridad: Prioridad;
+  prioridadId: string;
 }>;
 
 export async function actualizarTicket(id: string, datos: ActualizarTicketInput): Promise<TicketDetalle> {
@@ -172,8 +170,8 @@ export async function actualizarTicket(id: string, datos: ActualizarTicketInput)
 
 // ---- Estado (POST /tickets/:id/estado) ----
 
-export async function cambiarEstadoTicket(id: string, estado: EstadoTicket): Promise<TicketDetalle> {
-  const { data } = await apiClient.post<TicketDetalle>(`/tickets/${id}/estado`, { estado });
+export async function cambiarEstadoTicket(id: string, estadoId: string): Promise<TicketDetalle> {
+  const { data } = await apiClient.post<TicketDetalle>(`/tickets/${id}/estado`, { estadoId });
   return data;
 }
 
@@ -214,7 +212,7 @@ export type ConvertirTicketAOtInput = {
   titulo?: string;
   descripcion?: string;
   categoria: CategoriaOt;
-  prioridad?: Prioridad;
+  prioridadId?: string;
   ubicacion?: string;
   fechaEstimadaTermino?: string;
 } & ({ esInterna: true; areaInterna: string } | { esInterna?: false; clienteId?: string });

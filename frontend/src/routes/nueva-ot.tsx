@@ -13,18 +13,16 @@ import { areas } from "@/lib/mock-data";
 import {
   CATEGORIAS_OT,
   ORIGENES_OT,
-  PRIORIDADES,
   etiquetaCategoriaOt,
   etiquetaOrigenOt,
-  etiquetaPrioridad,
   etiquetaRol,
   type CategoriaOt,
   type OrigenOt,
-  type Prioridad,
 } from "@/lib/labels";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useClientes } from "@/hooks/useClientes";
 import { useUsuarios } from "@/hooks/useUsuarios";
+import { usePrioridades } from "@/hooks/usePrioridades";
 import { useCrearEtapa, useCrearOt } from "@/hooks/useOts";
 import { useOTStore } from "@/lib/ot-store";
 
@@ -67,11 +65,12 @@ function NuevaOT() {
   const crearEtapa = useCrearEtapa();
   const { data: clientes } = useClientes();
   const { data: usuarios } = useUsuarios();
+  const { data: prioridades } = usePrioridades();
 
   const [titulo, setTitulo] = useState("");
   const [descripcion, setDescripcion] = useState("");
   const [clienteId, setClienteId] = useState("");
-  const [prioridad, setPrioridad] = useState<Prioridad>("media");
+  const [prioridadId, setPrioridadId] = useState("");
   const [responsableId, setResponsableId] = useState(usuario?.id ?? "");
   const [fechaEstimadaTermino, setFechaEstimadaTermino] = useState("");
   const [origen, setOrigen] = useState<OrigenOt>("correo");
@@ -100,7 +99,7 @@ function NuevaOT() {
         titulo: titulo.trim(),
         descripcion: descripcion.trim(),
         categoria,
-        prioridad,
+        prioridadId,
         origen: interna ? "interna" : origen,
         ...(ubicacion.trim() ? { ubicacion: ubicacion.trim() } : {}),
         ...(solicitanteNombre.trim() ? { solicitanteNombre: solicitanteNombre.trim() } : {}),
@@ -190,16 +189,18 @@ function NuevaOT() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Prioridad</Label>
-              <Select value={prioridad} onValueChange={(v) => setPrioridad(v as Prioridad)}>
+              <Select value={prioridadId} onValueChange={setPrioridadId}>
                 <SelectTrigger className="h-10 text-sm">
-                  <span>{etiquetaPrioridad(prioridad)}</span>
+                  <span>{(prioridades ?? []).find((p) => p.id === prioridadId)?.nombre ?? "Selecciona una prioridad"}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  {PRIORIDADES.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {etiquetaPrioridad(p)}
-                    </SelectItem>
-                  ))}
+                  {(prioridades ?? [])
+                    .filter((p) => p.activo)
+                    .map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.nombre}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>

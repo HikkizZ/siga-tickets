@@ -7,17 +7,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { areas } from "@/lib/mock-data";
-import {
-  CATEGORIAS_OT,
-  PRIORIDADES,
-  etiquetaCategoriaOt,
-  etiquetaPrioridad,
-  type CategoriaOt,
-  type Prioridad as PrioridadBackend,
-} from "@/lib/labels";
+import { CATEGORIAS_OT, etiquetaCategoriaOt, type CategoriaOt } from "@/lib/labels";
 import { useOts } from "@/hooks/useOts";
+import { usePrioridades } from "@/hooks/usePrioridades";
 import { useDebounced } from "@/hooks/useDebounced";
 import type { ConvertirTicketAOtInput } from "@/lib/api/tickets";
+import type { PrioridadRef } from "@/lib/api/ots";
 
 /** Convierte el ticket en una OT nueva ("herencia completa" — docs/api.md,
  * POST /tickets/:id/convertir-a-ot). Sin campo "responsable": la OT hereda la cadena de
@@ -31,13 +26,14 @@ export function DialogoConvertirEnOT({
 }: {
   abierto: boolean;
   onAbrir: (v: boolean) => void;
-  ticket: { asunto: string; descripcion: string; prioridad: PrioridadBackend; cliente: { id: string; nombre: string } | null };
+  ticket: { asunto: string; descripcion: string; prioridad: PrioridadRef; cliente: { id: string; nombre: string } | null };
   onConvertir: (datos: ConvertirTicketAOtInput) => void;
 }) {
+  const { data: prioridades } = usePrioridades();
   const [titulo, setTitulo] = useState("");
   const [descripcion, setDescripcion] = useState("");
   const [categoria, setCategoria] = useState<CategoriaOt>("soporte");
-  const [prioridad, setPrioridad] = useState<PrioridadBackend>("media");
+  const [prioridadId, setPrioridadId] = useState("");
   const [ubicacion, setUbicacion] = useState("");
   const [fechaEstimadaTermino, setFechaEstimadaTermino] = useState("");
   const [interna, setInterna] = useState(false);
@@ -49,7 +45,7 @@ export function DialogoConvertirEnOT({
     setTitulo(ticket.asunto);
     setDescripcion(ticket.descripcion);
     setCategoria("soporte");
-    setPrioridad(ticket.prioridad);
+    setPrioridadId(ticket.prioridad.id);
     setUbicacion("");
     setFechaEstimadaTermino("");
     setInterna(!ticket.cliente);
@@ -91,16 +87,18 @@ export function DialogoConvertirEnOT({
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Prioridad</Label>
-              <Select value={prioridad} onValueChange={(v) => setPrioridad(v as PrioridadBackend)}>
+              <Select value={prioridadId} onValueChange={setPrioridadId}>
                 <SelectTrigger className="h-10 text-sm">
-                  <span>{etiquetaPrioridad(prioridad)}</span>
+                  <span>{(prioridades ?? []).find((p) => p.id === prioridadId)?.nombre ?? "Selecciona una prioridad"}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  {PRIORIDADES.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {etiquetaPrioridad(p)}
-                    </SelectItem>
-                  ))}
+                  {(prioridades ?? [])
+                    .filter((p) => p.activo || p.id === ticket.prioridad.id)
+                    .map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.nombre}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -148,7 +146,7 @@ export function DialogoConvertirEnOT({
                 titulo: titulo.trim() || ticket.asunto,
                 descripcion: descripcion.trim() || ticket.descripcion,
                 categoria,
-                prioridad,
+                prioridadId,
                 ...(ubicacion.trim() ? { ubicacion: ubicacion.trim() } : {}),
                 ...(fechaEstimadaTermino ? { fechaEstimadaTermino } : {}),
                 ...(interna ? { esInterna: true as const, areaInterna: area } : { esInterna: false as const, ...(clienteId ? { clienteId } : {}) }),

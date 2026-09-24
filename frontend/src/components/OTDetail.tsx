@@ -34,13 +34,9 @@ import { Avatar, EstadoCotizacionBadge, PrioridadBadge, SlaBadge } from "@/compo
 import { formatoFecha, formatoFechaHora, formatoMoneda } from "@/lib/mock-data";
 import {
   ESTADOS_OT,
-  PRIORIDADES,
-  etiquetaCanalTicket,
   etiquetaCategoriaOt,
   etiquetaEstadoOt,
-  etiquetaEstadoTicket,
   etiquetaOrigenOt,
-  etiquetaPrioridad,
   etiquetaRol,
   puedeEscribirCotizaciones,
 } from "@/lib/labels";
@@ -49,6 +45,7 @@ import type { Cotizacion } from "@/lib/api/cotizaciones";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useOTStore } from "@/lib/ot-store";
 import { useUsuarios } from "@/hooks/useUsuarios";
+import { usePrioridades } from "@/hooks/usePrioridades";
 import { useCotizaciones, useCrearCotizacion } from "@/hooks/useCotizaciones";
 import { useDebounced } from "@/hooks/useDebounced";
 import {
@@ -67,7 +64,7 @@ import {
   useVincularCotizacion,
 } from "@/hooks/useOts";
 import { cn, inicialesDeNombre } from "@/lib/utils";
-import type { EstadoOt as EstadoOtBackend, Prioridad as PrioridadBackend } from "@/lib/labels";
+import type { EstadoOt as EstadoOtBackend } from "@/lib/labels";
 
 function formatoBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -102,7 +99,9 @@ function textoEvento(e: EventoOt): string {
     case "estado_cambiado":
       return `cambió el estado a ${etiquetaEstadoOt(String(p["a"]) as EstadoOtBackend)}`;
     case "prioridad_cambiada":
-      return `cambió la prioridad a ${etiquetaPrioridad(String(p["a"]) as PrioridadBackend)}`;
+      // Fase C: `a` ya viene como el nombre legible de la Prioridad (docs/api.md), no un valor de
+      // enum — se muestra tal cual, sin pasar por ningún traductor.
+      return `cambió la prioridad a ${String(p["a"])}`;
     case "derivado":
       return `derivó la OT${typeof p["motivo"] === "string" ? ` — motivo: ${p["motivo"]}` : ""}`;
     case "comentario":
@@ -391,6 +390,7 @@ export function OTDetail() {
   const { data: ot, isLoading } = useOt(otSeleccionadaId);
   const { data: usuarios = [] } = useUsuarios();
 
+  const { data: prioridades } = usePrioridades();
   const actualizarOt = useActualizarOt();
   const cambiarEstado = useCambiarEstadoOt();
   const derivarOt = useDerivarOt();
@@ -508,7 +508,7 @@ export function OTDetail() {
               <SheetHeader className="space-y-2 border-b border-border px-6 py-5">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{ot.numero}</span>
-                  <PrioridadBadge prioridad={ot.prioridad} />
+                  <PrioridadBadge prioridad={ot.prioridad.nombre} />
                   <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                     {etiquetaEstadoOt(ot.estado)}
                   </span>
@@ -573,18 +573,20 @@ export function OTDetail() {
                 </Campo>
                 <Campo etiqueta="Prioridad">
                   <Select
-                    value={ot.prioridad}
-                    onValueChange={(v) => actualizarOt.mutate({ id: ot.id, datos: { prioridad: v as PrioridadBackend } })}
+                    value={ot.prioridad.id}
+                    onValueChange={(v) => actualizarOt.mutate({ id: ot.id, datos: { prioridadId: v } })}
                   >
                     <SelectTrigger className="h-8 w-full text-sm sm:w-28">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {PRIORIDADES.map((p) => (
-                        <SelectItem key={p} value={p}>
-                          {etiquetaPrioridad(p)}
-                        </SelectItem>
-                      ))}
+                      {(prioridades ?? [])
+                        .filter((p) => p.activo || p.id === ot.prioridad.id)
+                        .map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.nombre}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </Campo>
@@ -888,8 +890,7 @@ export function OTDetail() {
                             )}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {etiquetaEstadoTicket(t.estado as Parameters<typeof etiquetaEstadoTicket>[0])} ·{" "}
-                            {etiquetaCanalTicket(t.canal as Parameters<typeof etiquetaCanalTicket>[0])}
+                            {t.estado.nombre} · {t.canal.nombre}
                           </p>
                         </div>
                       </li>

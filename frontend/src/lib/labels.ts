@@ -80,41 +80,16 @@ export const ORIGENES_OT: readonly OrigenOt[] = ["mesa_ayuda", "correo", "telefo
 
 // ---- Compartidos entre OT y tickets ----
 
-export type Prioridad = "alta" | "media" | "baja";
-export const etiquetaPrioridad = crearTraductor<Prioridad>({ alta: "Alta", media: "Media", baja: "Baja" }, "Prioridad");
-export const PRIORIDADES: readonly Prioridad[] = ["alta", "media", "baja"];
+// Fase C: Prioridad/EstadoTicket/CanalTicket dejaron de ser enums fijos con traductor propio —
+// ahora son catálogos administrables (`{id, nombre}`, ver src/lib/api/prioridades.ts,
+// estadosTicket.ts, fuentesTicket.ts) y el backend ya devuelve el nombre legible directamente, así
+// que los componentes renderizan `algo.nombre` sin pasar por ningún traductor.
 
 export type SlaEstado = "en_plazo" | "por_vencer" | "vencida";
 export const etiquetaSlaEstado = crearTraductor<SlaEstado>(
   { en_plazo: "En plazo", por_vencer: "Por vencer", vencida: "Vencida" },
   "SlaEstado",
 );
-
-// ---- Tickets ----
-
-export type EstadoTicket = "nuevo" | "abierto" | "esperando_cliente" | "resuelto" | "cerrado";
-export const etiquetaEstadoTicket = crearTraductor<EstadoTicket>(
-  {
-    nuevo: "Nuevo",
-    abierto: "Abierto",
-    esperando_cliente: "Esperando cliente",
-    resuelto: "Resuelto",
-    cerrado: "Cerrado",
-  },
-  "EstadoTicket",
-);
-// Fase 3: sin máquina de transiciones estricta (docs/api.md, POST /tickets/:id/estado) — las 5
-// se muestran siempre, a diferencia de cotizaciones.
-export const ESTADOS_TICKET: readonly EstadoTicket[] = ["nuevo", "abierto", "esperando_cliente", "resuelto", "cerrado"];
-
-export type CanalTicket = "portal" | "correo" | "telefono" | "presencial" | "interno";
-export const etiquetaCanalTicket = crearTraductor<CanalTicket>(
-  { portal: "Portal", correo: "Correo", telefono: "Teléfono", presencial: "Presencial", interno: "Interno" },
-  "CanalTicket",
-);
-// Canales que acepta la creación manual de un ticket (docs/api.md, POST /tickets): portal/correo
-// son de fases futuras (portal público e ingesta de correo), nunca de este formulario.
-export const CANALES_TICKET_CREACION: readonly CanalTicket[] = ["telefono", "presencial", "interno"];
 
 // ---- Cotizaciones ----
 
@@ -200,5 +175,20 @@ export function puedeEscribirPlantillasCorreo(rol: Rol): boolean {
 // para cualquier rol autenticado (docs/api.md, sección "Clientes"), mismo criterio que
 // Departamentos.
 export function puedeEscribirClientes(rol: Rol): boolean {
+  return rol === "admin";
+}
+
+// Catálogos de Ticket (Fase C): POST/PATCH /prioridades, /estados-ticket y /fuentes-ticket son
+// admin-only, GET es lectura para cualquier rol autenticado (docs/api.md, sección "Catálogos
+// administrables (Fase C)"), mismo criterio que Departamentos/Temas de ayuda/Planes SLA.
+export function puedeEscribirPrioridades(rol: Rol): boolean {
+  return rol === "admin";
+}
+
+export function puedeEscribirEstadosTicket(rol: Rol): boolean {
+  return rol === "admin";
+}
+
+export function puedeEscribirFuentesTicket(rol: Rol): boolean {
   return rol === "admin";
 }

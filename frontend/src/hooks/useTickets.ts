@@ -15,7 +15,6 @@ import type {
   TicketsFiltros,
 } from "@/lib/api/tickets";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import type { EstadoTicket } from "@/lib/labels";
 
 const ticketKeys = {
   all: ["tickets"] as const,
@@ -79,7 +78,7 @@ export function useActualizarTicket() {
 export function useCambiarEstadoTicket() {
   const invalidar = useInvalidarTickets();
   return useMutation({
-    mutationFn: ({ id, estado }: { id: string; estado: EstadoTicket }) => api.cambiarEstadoTicket(id, estado),
+    mutationFn: ({ id, estadoId }: { id: string; estadoId: string }) => api.cambiarEstadoTicket(id, estadoId),
     onSuccess: () => invalidar(),
     onError: (error) => toast.error(mensajeError(error)),
   });

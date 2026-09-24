@@ -6,16 +6,10 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn, inicialesDeNombre } from "@/lib/utils";
 import { formatoFechaHora } from "@/lib/mock-data";
-import {
-  ESTADOS_TICKET,
-  PRIORIDADES,
-  etiquetaEstadoTicket,
-  etiquetaPrioridad,
-  type EstadoTicket as EstadoTicketBackend,
-  type Prioridad as PrioridadBackend,
-} from "@/lib/labels";
 import type { TicketDetalle } from "@/lib/api/tickets";
 import type { TramoResponsable } from "@/lib/api/ots";
+import { usePrioridades } from "@/hooks/usePrioridades";
+import { useEstadosTicket } from "@/hooks/useEstadosTicket";
 import {
   useActualizarTicket,
   useCambiarEstadoTicket,
@@ -111,6 +105,8 @@ export function TicketMetadatos({
   const cambiarEstado = useCambiarEstadoTicket();
   const tomarTicket = useTomarTicket();
   const desvincularOt = useDesvincularOtDeTicket();
+  const { data: prioridades } = usePrioridades();
+  const { data: estadosTicket } = useEstadosTicket();
   const [masDetalles, setMasDetalles] = useState(false);
 
   const tieneOts = ticket.ots.length > 0;
@@ -168,33 +164,44 @@ export function TicketMetadatos({
         <p className="text-[11px] text-muted-foreground">Solo gestión o administración pueden convertir o vincular órdenes de trabajo.</p>
       )}
 
-      {/* Estado / prioridad: editables, siempre visibles a un vistazo. */}
+      {/* Estado / prioridad: editables, siempre visibles a un vistazo. Solo se ofrecen filas
+          activas del catálogo (más la actual del ticket, aunque se haya desactivado después). */}
       <div className="grid grid-cols-2 gap-3">
         <Campo etiqueta="Estado">
-          <Select value={ticket.estado} onValueChange={(v) => cambiarEstado.mutate({ id: ticket.id, estado: v as EstadoTicketBackend })}>
+          <Select
+            value={ticket.estado.id}
+            onValueChange={(v) => cambiarEstado.mutate({ id: ticket.id, estadoId: v })}
+          >
             <SelectTrigger className="h-9 w-full text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {ESTADOS_TICKET.map((e) => (
-                <SelectItem key={e} value={e}>
-                  {etiquetaEstadoTicket(e)}
-                </SelectItem>
-              ))}
+              {(estadosTicket ?? [])
+                .filter((e) => e.activo || e.id === ticket.estado.id)
+                .map((e) => (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.nombre}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
         </Campo>
         <Campo etiqueta="Prioridad">
-          <Select value={ticket.prioridad} onValueChange={(v) => actualizarTicket.mutate({ id: ticket.id, datos: { prioridad: v as PrioridadBackend } })}>
+          <Select
+            value={ticket.prioridad.id}
+            onValueChange={(v) => actualizarTicket.mutate({ id: ticket.id, datos: { prioridadId: v } })}
+          >
             <SelectTrigger className="h-9 w-full text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {PRIORIDADES.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {etiquetaPrioridad(p)}
-                </SelectItem>
-              ))}
+              {(prioridades ?? [])
+                .filter((p) => p.activo || p.id === ticket.prioridad.id)
+                .map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.nombre}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
         </Campo>

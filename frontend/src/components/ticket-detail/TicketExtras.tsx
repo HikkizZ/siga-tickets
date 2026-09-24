@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { formatoFechaHora } from "@/lib/mock-data";
-import { etiquetaEstadoTicket, etiquetaPrioridad, type EstadoTicket as EstadoTicketBackend, type Prioridad as PrioridadBackend } from "@/lib/labels";
 import { descargarAdjunto } from "@/lib/api/ots";
 import type { EventoTicket, TicketDetalle } from "@/lib/api/tickets";
 
@@ -35,9 +34,11 @@ function textoEventoTicket(e: EventoTicket): string {
     case "creado":
       return "creó el ticket";
     case "estado_cambiado":
-      return `cambió el estado a ${etiquetaEstadoTicket(String(p["a"]) as EstadoTicketBackend)}`;
+      // Fase C: `a` ya viene como el nombre legible del EstadoTicket (docs/api.md), no un valor de
+      // enum — se muestra tal cual, sin pasar por ningún traductor.
+      return `cambió el estado a ${String(p["a"])}`;
     case "prioridad_cambiada":
-      return `cambió la prioridad a ${etiquetaPrioridad(String(p["a"]) as PrioridadBackend)}`;
+      return `cambió la prioridad a ${String(p["a"])}`;
     case "ticket_editado":
       return "editó datos del ticket";
     case "tomado":

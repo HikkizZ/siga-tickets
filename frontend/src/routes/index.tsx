@@ -8,13 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/u
 import { Avatar, PrioridadBadge, SlaBadge } from "@/components/Prioridad";
 import { cn, inicialesDeNombre } from "@/lib/utils";
 import { formatoFecha } from "@/lib/mock-data";
-import { ESTADOS_OT, PRIORIDADES, etiquetaEstadoOt, etiquetaPrioridad } from "@/lib/labels";
+import { ESTADOS_OT, etiquetaEstadoOt } from "@/lib/labels";
 import { useOtsKanban } from "@/hooks/useOts";
 import type { OtKanbanItem } from "@/lib/api/ots";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useOTStore } from "@/lib/ot-store";
 import { useUsuarios } from "@/hooks/useUsuarios";
 import { useClientes } from "@/hooks/useClientes";
+import { usePrioridades } from "@/hooks/usePrioridades";
 import { useDebounced } from "@/hooks/useDebounced";
 
 export const Route = createFileRoute("/")({
@@ -112,7 +113,7 @@ function Tarjeta({ ot, compacto }: { ot: OtKanbanItem; compacto: boolean }) {
           <h3 className="min-w-0 flex-1 truncate text-xs font-semibold leading-snug tracking-tight" title={ot.titulo}>
             {ot.titulo}
           </h3>
-          <PrioridadBadge prioridad={ot.prioridad} className="shrink-0 gap-1 px-1 py-0 text-[10px]" />
+          <PrioridadBadge prioridad={ot.prioridad.nombre} className="shrink-0 gap-1 px-1 py-0 text-[10px]" />
         </div>
         <div className="mt-1.5 flex items-center gap-1.5">
           <SlaBadge nivel={ot.slaEstado} className="shrink-0 gap-0.5 px-1 py-0 text-[10px]" />
@@ -143,7 +144,7 @@ function Tarjeta({ ot, compacto }: { ot: OtKanbanItem; compacto: boolean }) {
     >
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-[11px] tracking-tight text-muted-foreground">{ot.numero}</span>
-        <PrioridadBadge prioridad={ot.prioridad} />
+        <PrioridadBadge prioridad={ot.prioridad.nombre} />
       </div>
       <h3 className="mt-2 line-clamp-2 text-sm font-semibold leading-snug tracking-tight">{ot.titulo}</h3>
       <p className="mt-1 truncate text-xs text-muted-foreground">{ot.cliente?.nombre ?? ot.areaInterna ?? "Interno"}</p>
@@ -194,10 +195,11 @@ function Tablero() {
   const textoDebounced = useDebounced(texto);
   const { data: usuarios } = useUsuarios();
   const { data: clientes } = useClientes();
+  const { data: prioridades } = usePrioridades();
 
   const { data: columnas, isLoading } = useOtsKanban({
     q: textoDebounced.trim() || undefined,
-    prioridad: prioridad === "todas" ? undefined : (prioridad as (typeof PRIORIDADES)[number]),
+    prioridadId: prioridad === "todas" ? undefined : prioridad,
     responsableId: responsable === "todos" ? undefined : responsable,
     clienteId: cliente === "todos" ? undefined : cliente,
     mios: misAsignados || undefined,
@@ -219,13 +221,13 @@ function Tablero() {
         </div>
         <Select value={prioridad} onValueChange={setPrioridad}>
           <SelectTrigger className="h-9 w-36 text-sm">
-            <span>{prioridad === "todas" ? "Prioridad" : etiquetaPrioridad(prioridad as (typeof PRIORIDADES)[number])}</span>
+            <span>{prioridad === "todas" ? "Prioridad" : (prioridades ?? []).find((p) => p.id === prioridad)?.nombre ?? "Prioridad"}</span>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todas">Toda prioridad</SelectItem>
-            {PRIORIDADES.map((p) => (
-              <SelectItem key={p} value={p}>
-                {etiquetaPrioridad(p)}
+            {(prioridades ?? []).map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.nombre}
               </SelectItem>
             ))}
           </SelectContent>

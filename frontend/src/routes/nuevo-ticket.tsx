@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,12 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { CANALES_TICKET_CREACION, PRIORIDADES, etiquetaCanalTicket, etiquetaPrioridad, type Prioridad } from "@/lib/labels";
-import type { CanalTicketCreacion } from "@/lib/api/tickets";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useClientes } from "@/hooks/useClientes";
 import { useCrearTicket } from "@/hooks/useTickets";
 import { useTemasAyuda } from "@/hooks/useTemasAyuda";
+import { usePrioridades } from "@/hooks/usePrioridades";
+import { useFuentesTicket } from "@/hooks/useFuentesTicket";
 import { useOTStore } from "@/lib/ot-store";
 
 export const Route = createFileRoute("/nuevo-ticket")({
@@ -68,6 +68,8 @@ function NuevoTicket() {
   const { abrirTicket } = useOTStore();
   const { data: clientes } = useClientes();
   const { data: temasAyuda } = useTemasAyuda();
+  const { data: prioridades } = usePrioridades();
+  const { data: fuentesTicket } = useFuentesTicket();
   const crearTicket = useCrearTicket();
   const navigate = useNavigate();
 
@@ -77,8 +79,8 @@ function NuevoTicket() {
   const [clienteId, setClienteId] = useState("");
   const [asunto, setAsunto] = useState("");
   const [descripcion, setDescripcion] = useState("");
-  const [canal, setCanal] = useState<CanalTicketCreacion>("telefono");
-  const [prioridad, setPrioridad] = useState<Prioridad>("media");
+  const [canalId, setCanalId] = useState("");
+  const [prioridadId, setPrioridadId] = useState("");
   const [temaAyudaId, setTemaAyudaId] = useState("");
   const [guardando, setGuardando] = useState(false);
 
@@ -86,7 +88,24 @@ function NuevoTicket() {
   // que el filtro de clientes/usuarios activos de fases anteriores).
   const temasActivos = (temasAyuda ?? []).filter((t) => t.activo);
 
-  const listo = nombre.trim() !== "" && email.trim() !== "" && asunto.trim() !== "" && descripcion.trim() !== "";
+  // Fase C: solo las fuentes activas y con `esManual: true` son elegibles para crear un ticket a
+  // mano (docs/api.md, POST /tickets) — Portal y Correo quedan reservados a sus propios flujos
+  // automáticos. Preselecciona la primera en cuanto llega el catálogo, mismo criterio que
+  // prioridadId en OTDetail.tsx/nueva-ot.tsx (arranca vacío hasta que hay datos).
+  const fuentesManuales = (fuentesTicket ?? []).filter((f) => f.activo && f.esManual);
+
+  useEffect(() => {
+    if (!canalId && fuentesManuales.length > 0) setCanalId(fuentesManuales[0]!.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fuentesManuales.length]);
+
+  const listo =
+    nombre.trim() !== "" &&
+    email.trim() !== "" &&
+    asunto.trim() !== "" &&
+    descripcion.trim() !== "" &&
+    canalId !== "" &&
+    prioridadId !== "";
 
   const alGuardar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,8 +119,8 @@ function NuevoTicket() {
         solicitanteEmail: email.trim(),
         ...(telefono.trim() ? { solicitanteTelefono: telefono.trim() } : {}),
         ...(clienteId ? { clienteId } : {}),
-        canal,
-        prioridad,
+        canalId,
+        prioridadId,
         ...(temaAyudaId ? { temaAyudaId } : {}),
       });
       abrirTicket(ticket.id);
@@ -184,30 +203,36 @@ function NuevoTicket() {
             />
           </Campo>
           <Campo etiqueta="Canal">
-            <Select value={canal} onValueChange={(v) => setCanal(v as CanalTicketCreacion)}>
+            <Select value={canalId} onValueChange={setCanalId}>
               <SelectTrigger className="h-10 text-sm">
-                <span>{etiquetaCanalTicket(canal)}</span>
+                <span className={canalId ? "" : "text-muted-foreground"}>
+                  {fuentesManuales.find((f) => f.id === canalId)?.nombre ?? "Selecciona un canal"}
+                </span>
               </SelectTrigger>
               <SelectContent>
-                {CANALES_TICKET_CREACION.map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {etiquetaCanalTicket(c)}
+                {fuentesManuales.map((f) => (
+                  <SelectItem key={f.id} value={f.id}>
+                    {f.nombre}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </Campo>
           <Campo etiqueta="Prioridad">
-            <Select value={prioridad} onValueChange={(v) => setPrioridad(v as Prioridad)}>
+            <Select value={prioridadId} onValueChange={setPrioridadId}>
               <SelectTrigger className="h-10 text-sm">
-                <span>{etiquetaPrioridad(prioridad)}</span>
+                <span className={prioridadId ? "" : "text-muted-foreground"}>
+                  {(prioridades ?? []).find((p) => p.id === prioridadId)?.nombre ?? "Selecciona una prioridad"}
+                </span>
               </SelectTrigger>
               <SelectContent>
-                {PRIORIDADES.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {etiquetaPrioridad(p)}
-                  </SelectItem>
-                ))}
+                {(prioridades ?? [])
+                  .filter((p) => p.activo)
+                  .map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.nombre}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </Campo>

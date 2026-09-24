@@ -41,7 +41,7 @@ import { formatoMoneda } from "@/lib/mock-data";
 import { useOTStore } from "@/lib/ot-store";
 import { OTDetail } from "@/components/OTDetail";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { etiquetaEstadoCotizacion, etiquetaEstadoOt, etiquetaEstadoTicket, etiquetaRol } from "@/lib/labels";
+import { etiquetaEstadoCotizacion, etiquetaEstadoOt, etiquetaRol } from "@/lib/labels";
 import { useUsuarios } from "@/hooks/useUsuarios";
 import { useClientes } from "@/hooks/useClientes";
 import { useDebounced } from "@/hooks/useDebounced";
@@ -602,7 +602,7 @@ function BuscadorGlobal() {
                     <Fila
                       key={t.id}
                       principal={t.numero}
-                      secundario={`${t.asunto} · ${etiquetaEstadoTicket(t.estado)}`}
+                      secundario={`${t.asunto} · ${t.estado}`}
                       onSelect={() => {
                         abrirTicket(t.id);
                         navigate({ to: "/tickets" });
